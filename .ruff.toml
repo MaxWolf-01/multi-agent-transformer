@@ -1,0 +1,10 @@
+line-length = 130
+target-version = "py312"
+fix = true
+lint.ignore = [
+    "F722", # "Syntax error in forward annotation" (issues with tensor typing)
+    "E731", # "do not assign a lambda expression, use a def"
+    "F821", # "undefined name" (issues with tensor typing)
+    "E741", # "ambiguous variable name" (e.g. l)
+]
+
