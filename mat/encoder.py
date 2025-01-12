@@ -15,7 +15,6 @@ class EncoderConfig:
     depth: int
     embed_dim: int
     num_heads: int
-    num_agents: int
 
 
 class EncoderOutput(NamedTuple):
@@ -27,19 +26,18 @@ class Encoder(nn.Module):
     def __init__(self, config: EncoderConfig) -> None:
         super().__init__()
 
-        self.obs_encoder = nn.Sequential(
+        self.obs_emb = nn.Sequential(
             nn.LayerNorm(config.obs_dim),
             nn.Linear(config.obs_dim, config.embed_dim),
             nn.GELU(),
         )
-        self.obs_encoder.apply(partial(init_weights, use_relu_gain=True))
+        self.obs_emb.apply(partial(init_weights, use_relu_gain=True))
 
         self.encoder = x_transformers.Encoder(
             dim=config.embed_dim,
             depth=config.depth,
             heads=config.num_heads,
-            dim_head=config.embed_dim // config.num_heads,
-            max_seq_len=config.num_agents,
+            attn_dim_head=config.embed_dim // config.num_heads,
         )
         self.encoder.apply(partial(init_weights, use_relu_gain=True))
 
@@ -52,7 +50,7 @@ class Encoder(nn.Module):
         self.value_head.apply(partial(init_weights, use_relu_gain=True))
 
     def forward(self, obs: Float[Tensor, "b agents obs"]) -> EncoderOutput:
-        x = self.obs_encoder(obs)
+        x = self.obs_emb(obs)
         encoded = self.encoder(x)
         values = self.value_head(encoded)
         return EncoderOutput(values=values, encoded=encoded)

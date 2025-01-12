@@ -34,6 +34,7 @@ class SamplerResult(NamedTuple):
     log_probs: Float[Tensor, "b agents 1"]
 
 
+@dataclass
 class DiscreteSamplerConfig(SamplerConfig):
     start_token: int = 1
 
@@ -121,6 +122,7 @@ class ContinuousSamplerResult(NamedTuple):
     log_probs: Float[Tensor, "b agents act"]
 
 
+@dataclass
 class ContinousSamplerConfig(SamplerConfig):
     std_scale: float = 0.5
 

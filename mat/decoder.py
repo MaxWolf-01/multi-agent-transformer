@@ -27,19 +27,19 @@ class TransformerDecoder(nn.Module):
         super().__init__()
         self.cfg = config
 
-        self.act_encoder = (
+        self.act_emb = (
             nn.Sequential(nn.Linear(config.act_dim + 1, config.embed_dim, bias=False), nn.GELU())
             if config.act_type == "discrete"
             else nn.Sequential(nn.Linear(config.act_dim, config.embed_dim), nn.GELU())
         )
-        self.act_encoder.apply(partial(init_weights, use_relu_gain=True))
-        self.act_embedding_ln = nn.LayerNorm(config.embed_dim)
+        self.act_emb.apply(partial(init_weights, use_relu_gain=True))
+        self.act_emb_ln = nn.LayerNorm(config.embed_dim)
 
         self.decoder = x_transformers.Decoder(
             dim=config.embed_dim,
             depth=config.depth,
             heads=config.num_heads,
-            dim_head=config.embed_dim // config.num_heads,
+            attn_dim_head=config.embed_dim // config.num_heads,
             num_tokens=config.act_dim,
             max_seq_len=config.num_agents,
             cross_attend=True,
@@ -60,8 +60,8 @@ class TransformerDecoder(nn.Module):
     def forward(
         self, action: Float[Tensor, "b agents act"], encoded_obs: Float[Tensor, "b agents eobs"]
     ) -> Float[Tensor, "b agents act"]:
-        x = self.act_encoder(action)
-        x = self.act_embedding_ln(x)
+        x = self.act_emb(action)
+        x = self.act_emb_ln(x)
         x = self.decoder(x, context=encoded_obs)
         return self.act_head(x)
 

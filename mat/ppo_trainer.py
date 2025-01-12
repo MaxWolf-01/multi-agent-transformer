@@ -1,17 +1,16 @@
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NamedTuple
 
 import torch
 import torch.nn.functional as F
 from jaxtyping import Float
 from torch import Tensor
 
-from mat.buffer import Buffer, BufferConfig
 from mat.mat import MAT
 from mat.runners.base import EnvRunner
 
 
-# TODO cleanup ifs, refactor logging to be more configurable
+# TODO cleanup ifs in loss computations
 
 
 @dataclass
@@ -37,8 +36,16 @@ class TrainerConfig:
     use_huber_loss: bool
     huber_delta: float
 
-    buffer: BufferConfig
     device: torch.device
+
+
+class Metrics(NamedTuple):
+    """Metrics from a training episode."""
+
+    policy_loss: float
+    value_loss: float
+    last_grad_norm: float
+    mean_reward: float
 
 
 class PPOTrainer:
@@ -47,11 +54,17 @@ class PPOTrainer:
     def __init__(self, config: TrainerConfig, policy: MAT, runner: EnvRunner):
         self.cfg = config
         self.policy = policy
-        self.buffer = Buffer(config.buffer)
         self.runner = runner
         self.optimizer = torch.optim.Adam(
             self.policy.parameters(), lr=config.lr, eps=config.eps, weight_decay=config.weight_decay
         )
+        self._metrics = None
+
+    @property
+    def metrics(self) -> Metrics:
+        if self._metrics is None:
+            raise RuntimeError("No metrics available yet. Run train_episode() first.")
+        return self._metrics
 
     def _compute_policy_loss(
         self,
@@ -106,11 +119,11 @@ class PPOTrainer:
         return value_loss * self.cfg.value_loss_coef
 
     def _update_policy(self) -> dict[str, Any]:
-        """Update policy using PPO."""
+        """Update policy using PPO on the collected rollout in the buffer."""
         metrics = {
-            "policy_loss": 0.0,
-            "value_loss": 0.0,
-            "grad_norm": 0.0,
+            "mean_policy_loss": 0.0,
+            "mean_value_loss": 0.0,
+            "last_grad_norm": 0.0,
         }
         num_updates = self.cfg.num_epochs * self.cfg.num_minibatches
 
@@ -144,36 +157,38 @@ class PPOTrainer:
 
                 self.optimizer.step()
 
-                # Update metrics
-                metrics["policy_loss"] += policy_loss.item()
-                metrics["value_loss"] += value_loss.item()
+                metrics["mean_policy_loss"] += policy_loss.item()
+                metrics["mean_value_loss"] += value_loss.item()
                 metrics["last_grad_norm"] = grad_norm.item()
 
-        # average metrics
-        metrics["policy_loss"] /= num_updates
-        metrics["value_loss"] /= num_updates
-
+        metrics["mean_policy_loss"] /= num_updates
+        metrics["mean_value_loss"] /= num_updates
         return metrics
 
-    def train(self, num_env_steps: int) -> None:
-        num_episodes = num_env_steps // (self.cfg.buffer.size * self.cfg.buffer.num_envs)
+    def train_episode(self) -> Metrics:
+        """Run one training episode.
 
-        for episode in range(num_episodes):
-            next_values = self.runner.collect_rollout()
-            self.buffer.compute_returns_and_advantages(
-                next_value=next_values.numpy(),
-                gamma=self.cfg.gamma,
-                gae_lambda=self.cfg.gae_lambda,
-                normalize_advantage=self.cfg.normalize_advantage,
-            )
+        1. Collect experience using runner
+        2. Compute advantages and returns
+        3. Update policy multiple times with PPO
+        4. Return metrics
+        """
+        next_values = self.runner.collect_rollout()
 
-            metrics = self._update_policy()
-            self.runner.buffer.after_update()
+        self.runner.buffer.compute_returns_and_advantages(
+            next_value=next_values.numpy(),
+            gamma=self.cfg.gamma,
+            gae_lambda=self.cfg.gae_lambda,
+            normalize_advantage=self.cfg.normalize_advantage,
+        )
+        episode_metrics = self._update_policy()
+        self.runner.buffer.after_update()  # reset buffer (keeps last observation for next episode)
 
-            if episode % 10 == 0:
-                print(
-                    f"Episode {episode}/{num_episodes} | "
-                    f"policy_loss: {metrics['policy_loss']:.3f} | "
-                    f"value_loss: {metrics['value_loss']:.3f} | "
-                    f"grad_norm: {metrics['grad_norm']:.3f}"
-                )
+        mean_reward = float(self.runner.buffer.rewards.mean())
+        self._metrics = Metrics(
+            policy_loss=episode_metrics["policy_loss"],
+            value_loss=episode_metrics["value_loss"],
+            last_grad_norm=episode_metrics["last_grad_norm"],
+            mean_reward=mean_reward,
+        )
+        return self._metrics
