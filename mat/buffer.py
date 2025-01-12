@@ -15,7 +15,7 @@ class BufferConfig:
     num_envs: int
     num_agents: int
     obs_shape: tuple[int, ...]
-    action_shape: tuple[int, ...]
+    action_dim: int
 
 
 class BufferSample(NamedTuple):
@@ -23,13 +23,13 @@ class BufferSample(NamedTuple):
     All tensors have shape (batch_size, num_agents, feature_dims) where batch_size = num_envs * rollout_steps.
     """
 
-    obs: Float[Tensor, "batch agents *obs"]
-    actions: Float[Tensor, "batch agents *action"]
-    old_values: Float[Tensor, "batch agents 1"]
-    old_action_log_probs: Float[Tensor, "batch agents action"]
-    advantages: Float[Tensor, "batch agents 1"]
-    returns: Float[Tensor, "batch agents 1"]
-    active_masks: Float[Tensor, "batch agents 1"] | None
+    obs: Float[Tensor, "batch agents *obs_shape"]
+    actions: Float[Tensor, "batch agents action_dim"]
+    old_values: Float[Tensor, "batch agents"]
+    old_action_log_probs: Float[Tensor, "batch agents action_dim"]
+    advantages: Float[Tensor, "batch agents"]
+    returns: Float[Tensor, "batch agents"]
+    active_masks: Float[Tensor, "batch agents"] | None
 
 
 class Buffer:
@@ -64,12 +64,12 @@ class Buffer:
     def insert(
         self,
         obs: Float[np.ndarray, "envs agents *obs_shape"],
-        actions: Float[np.ndarray, "envs agents *action"],
-        action_log_probs: Float[np.ndarray, "envs agents *action"],
-        values: Float[np.ndarray, "envs agents 1"],
-        rewards: Float[np.ndarray, "envs agents 1"],
-        dones: Float[np.ndarray, "envs agents 1"],
-        active_masks: Float[np.ndarray, "envs agents 1"] | None = None,
+        actions: Float[np.ndarray, "envs agents action_dim"],
+        action_log_probs: Float[np.ndarray, "envs agents action_dim"],
+        values: Float[np.ndarray, "envs agents"],
+        rewards: Float[np.ndarray, "envs agents"],
+        dones: Float[np.ndarray, "envs agents"],
+        active_masks: Float[np.ndarray, "envs agents"] | None = None,
     ) -> None:
         """Insert a new transition into the buffer.
 

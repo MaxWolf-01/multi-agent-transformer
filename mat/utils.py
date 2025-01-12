@@ -13,12 +13,12 @@ def init_weights(m: nn.Module, gain: float = 0.01, use_relu_gain: bool = False):
 
 
 def get_gae_returns_and_advantages(
-    rewards: Float[np.ndarray, "steps envs agents 1"],
-    values: Float[np.ndarray, "steps envs agents 1"],
-    next_value: Float[np.ndarray, "envs agents 1"],
+    rewards: Float[np.ndarray, "steps envs agents"],
+    values: Float[np.ndarray, "steps envs agents"],
+    next_value: Float[np.ndarray, "envs agents"],
     gamma: float,
     gae_lambda: float,
-) -> tuple[Float[np.ndarray, "steps envs agents 1"], Float[np.ndarray, "steps envs agents 1"]]:
+) -> tuple[Float[np.ndarray, "steps envs agents"], Float[np.ndarray, "steps envs agents"]]:
     """Compute returns and advantages using Generalized Advantage Estimation (GAE)"""
     steps = rewards.shape[0]
     advantages = np.zeros_like(rewards)
