@@ -25,6 +25,9 @@ class MAT(nn.Module):
         self.encoder = encoder
         self.decoder = decoder
         self.sampler = sampler
+        self.use_encoded_obs = isinstance(decoder, TransformerDecoder)
+        self.use_raw_obs = isinstance(decoder, DecentralizedMlpDecoder)
+        self.is_discrete = isinstance(sampler, DiscreteSampler)
 
     def forward(
         self,
@@ -33,23 +36,8 @@ class MAT(nn.Module):
         available_actions: Float[Tensor, "b agents act"] | None = None,
     ) -> MATOutput:
         values, encoded_obs = self.encoder(obs)
-
-        if isinstance(self.sampler, DiscreteSampler):
-            action_log_probs, entropy = self.sampler.parallel(
-                actions=actions,
-                decoder=self.decoder,
-                encoded_obs=encoded_obs if isinstance(self.decoder, TransformerDecoder) else None,
-                raw_obs=obs if isinstance(self.decoder, DecentralizedMlpDecoder) else None,
-                available_actions=available_actions,
-            )
-        else:
-            action_log_probs, entropy = self.sampler.parallel(
-                actions=actions,
-                decoder=self.decoder,
-                encoded_obs=encoded_obs if isinstance(self.decoder, TransformerDecoder) else None,
-                raw_obs=obs if isinstance(self.decoder, DecentralizedMlpDecoder) else None,
-            )
-
+        kwargs = self._get_sampler_kwargs(encoded_obs=encoded_obs, obs=obs, available_actions=available_actions)
+        action_log_probs, entropy = self.sampler.parallel(actions=actions, decoder=self.decoder, **kwargs)
         return MATOutput(actions=actions, action_log_probs=action_log_probs, values=values)
 
     def get_actions(
@@ -59,24 +47,16 @@ class MAT(nn.Module):
         deterministic: bool = False,
     ) -> MATOutput:
         values, encoded_obs = self.encoder(obs)
-
-        if isinstance(self.sampler, DiscreteSampler):
-            actions, action_log_probs = self.sampler.autoregressive(
-                available_actions=available_actions,
-                decoder=self.decoder,
-                encoded_obs=encoded_obs if isinstance(self.decoder, TransformerDecoder) else None,
-                raw_obs=obs if isinstance(self.decoder, DecentralizedMlpDecoder) else None,
-                deterministic=deterministic,
-            )
-        else:
-            actions, action_log_probs = self.sampler.autoregressive(
-                decoder=self.decoder,
-                encoded_obs=encoded_obs if isinstance(self.decoder, TransformerDecoder) else None,
-                raw_obs=obs if isinstance(self.decoder, DecentralizedMlpDecoder) else None,
-                deterministic=deterministic,
-            )
+        kwargs = self._get_sampler_kwargs(encoded_obs=encoded_obs, obs=obs, available_actions=available_actions)
+        actions, action_log_probs = self.sampler.autoregressive(decoder=self.decoder, deterministic=deterministic, **kwargs)
         return MATOutput(actions=actions, action_log_probs=action_log_probs, values=values)
 
     def get_values(self, obs: Float[Tensor, "b agents obs"]) -> Float[Tensor, "b agents 1"]:
         values, _ = self.encoder(obs)
         return values
+
+    def _get_sampler_kwargs(self, encoded_obs: Tensor, obs: Tensor, available_actions: Tensor | None = None) -> dict:
+        return {
+            "encoded_obs": encoded_obs if self.use_encoded_obs else None,
+            "raw_obs": obs if self.use_raw_obs else None,
+        } | ({"available_actions": available_actions} if self.is_discrete else {})

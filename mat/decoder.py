@@ -67,7 +67,7 @@ class TransformerDecoder(nn.Module):
 
 
 @dataclass
-class DecentralizedDecoderConfig:
+class DecentralizedMlpDecoderConfig:
     obs_dim: int
     act_dim: int
     depth: int
@@ -80,7 +80,7 @@ class DecentralizedDecoderConfig:
 
 
 class DecentralizedMlpDecoder(nn.Module):
-    def __init__(self, config: DecentralizedDecoderConfig) -> None:
+    def __init__(self, config: DecentralizedMlpDecoderConfig) -> None:
         super().__init__()
         self.cfg = config
 
