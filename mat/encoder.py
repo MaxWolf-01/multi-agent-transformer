@@ -18,7 +18,7 @@ class EncoderConfig:
 
 
 class EncoderOutput(NamedTuple):
-    values: Float[Tensor, "b agents 1"]
+    values: Float[Tensor, "b agents"]
     encoded: Float[Tensor, "b agents emb"]
 
 
@@ -52,5 +52,5 @@ class Encoder(nn.Module):
     def forward(self, obs: Float[Tensor, "b agents obs"]) -> EncoderOutput:
         x = self.obs_emb(obs)
         encoded = self.encoder(x)
-        values = self.value_head(encoded)
+        values = self.value_head(encoded).squeeze()
         return EncoderOutput(values=values, encoded=encoded)

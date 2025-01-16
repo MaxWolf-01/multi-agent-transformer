@@ -40,8 +40,6 @@ class TransformerDecoder(nn.Module):
             depth=config.depth,
             heads=config.num_heads,
             attn_dim_head=config.embed_dim // config.num_heads,
-            num_tokens=config.act_dim,
-            max_seq_len=config.num_agents,
             cross_attend=True,
         )
         self.decoder.apply(partial(init_weights, use_relu_gain=True))

@@ -15,7 +15,7 @@ class BufferConfig:
     num_envs: int
     num_agents: int
     obs_shape: tuple[int, ...]
-    action_dim: int
+    action_dim: int  # scalar index if discrete, vector if continuous
 
 
 class BufferSample(NamedTuple):
@@ -24,15 +24,16 @@ class BufferSample(NamedTuple):
     """
 
     obs: Float[Tensor, "batch agents *obs_shape"]
-    actions: Float[Tensor, "batch agents action_dim"]
+    actions: Float[Tensor, "batch agents act"]  # scalar index if discrete, vector if continuous
     old_values: Float[Tensor, "batch agents"]
-    old_action_log_probs: Float[Tensor, "batch agents action_dim"]
+    old_action_log_probs: Float[Tensor, "batch agents act"]  # scalar index if discrete, vector if continuous
     advantages: Float[Tensor, "batch agents"]
     returns: Float[Tensor, "batch agents"]
     active_masks: Float[Tensor, "batch agents"] | None
 
 
 class Buffer:
+    # TODO why not store as just (size, num_agents, *) or (size, *)?
     """Stores trajectories collected from multiple parallel environments.
 
     - Uses a circular buffer with size+1 slots for observations/values because we need the final state's value estimate for bootstrapping returns
@@ -46,14 +47,14 @@ class Buffer:
 
         # add extra step (+1) to observations/values/dones for bootstrapping returns computation
         self.obs = np.zeros((size + 1, num_envs, num_agents, *cfg.obs_shape), dtype=np.float32)
-        self.values = np.zeros((size + 1, num_envs, num_agents, 1), dtype=np.float32)
-        self.dones = np.zeros((size + 1, num_envs, num_agents, 1), dtype=np.float32)
+        self.values = np.zeros((size + 1, num_envs, num_agents), dtype=np.float32)
+        self.dones = np.zeros((size + 1, num_envs, num_agents), dtype=np.float32)
         # regular trajectory data
-        self.actions = np.zeros((size, num_envs, num_agents, *cfg.action_shape), dtype=np.float32)
-        self.action_log_probs = np.zeros((size, num_envs, num_agents, *cfg.action_shape), dtype=np.float32)
-        self.rewards = np.zeros((size, num_envs, num_agents, 1), dtype=np.float32)
+        self.actions = np.zeros((size, num_envs, num_agents, cfg.action_dim), dtype=np.float32)
+        self.action_log_probs = np.zeros((size, num_envs, num_agents), dtype=np.float32)
+        self.rewards = np.zeros((size, num_envs, num_agents), dtype=np.float32)
         # optional mask for inactive agents (e.g., dead agents in some environments)
-        self.active_masks = np.ones((size + 1, num_envs, num_agents, 1), dtype=np.float32)
+        self.active_masks = np.ones((size + 1, num_envs, num_agents), dtype=np.float32)
         # computed after collecting complete trajectory
         self.returns = None
         self.advantages = None
@@ -64,8 +65,8 @@ class Buffer:
     def insert(
         self,
         obs: Float[np.ndarray, "envs agents *obs_shape"],
-        actions: Float[np.ndarray, "envs agents action_dim"],
-        action_log_probs: Float[np.ndarray, "envs agents action_dim"],
+        actions: Float[np.ndarray, "envs agents act"],  # scalar index if discrete, vector if continuous
+        action_log_probs: Float[np.ndarray, "envs agents act"],  # scalar index if discrete, vector if continuous
         values: Float[np.ndarray, "envs agents"],
         rewards: Float[np.ndarray, "envs agents"],
         dones: Float[np.ndarray, "envs agents"],
@@ -95,7 +96,7 @@ class Buffer:
 
     def compute_returns_and_advantages(
         self,
-        next_value: Float[np.ndarray, "envs agents 1"],
+        next_value: Float[np.ndarray, "envs agents"],
         gamma: float,
         gae_lambda: float,
         normalize_advantage: bool = True,
@@ -124,7 +125,7 @@ class Buffer:
             end_idx = start_idx + mini_batch_size
             mb_inds = indices[start_idx:end_idx]
 
-            def _cast(x: np.ndarray) -> torch.Tensor:
+            def _cast(x: np.ndarray) -> torch.Tensor:  # (size+1, num_envs, num_agents, *) -> (bs, num_agents, *)
                 return torch.from_numpy(x.reshape(-1, *x.shape[2:])[mb_inds]).to(device)
 
             yield BufferSample(

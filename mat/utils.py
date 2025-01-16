@@ -22,7 +22,7 @@ def get_gae_returns_and_advantages(
     """Compute returns and advantages using Generalized Advantage Estimation (GAE)"""
     steps = rewards.shape[0]
     advantages = np.zeros_like(rewards)
-    last_advantage = 0
+    last_advantage = np.zeros_like(next_value)
 
     for t in reversed(range(steps)):
         if t == steps - 1:

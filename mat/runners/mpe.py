@@ -1,8 +1,8 @@
-from typing import Any
-
-import numpy as np
+import supersuit as ss
 import torch
-from pettingzoo.mpe import simple_tag_v3, simple_world_comm_v3
+from jaxtyping import Float
+from pettingzoo.mpe import simple_spread_v3
+from torch import Tensor
 
 from mat.buffer import Buffer
 from mat.mat import MAT
@@ -10,12 +10,8 @@ from mat.runners.base import EnvRunner
 
 
 class MPERunner(EnvRunner):
-    """Runner for Multi-Particle environments from PettingZoo."""
-
     SUPPORTED_ENVS = {
-        "simple_tag_v3": simple_tag_v3.parallel_env,
-        "simple_world_comm_v3": simple_world_comm_v3.parallel_env,
-        # TODO add the rest
+        "simple_spread_v3": simple_spread_v3.parallel_env,
     }
 
     @staticmethod
@@ -24,48 +20,43 @@ class MPERunner(EnvRunner):
             raise ValueError(f"Unknown MPE environment: {env_id}")
         return MPERunner.SUPPORTED_ENVS[env_id](**env_kwargs)
 
-    def __init__(self, env, policy: MAT, buffer: Buffer):
-        super().__init__(buffer)
-        self.env = env
+    def __init__(self, env, policy: MAT, buffer: Buffer, num_envs: int, device: str | torch.device):
+        super().__init__(device, buffer)
+        self.env = ss.concat_vec_envs_v1(ss.pettingzoo_env_to_vec_env_v1(env), num_vec_envs=num_envs)
         self.policy = policy
         self.buffer = buffer
+        self.num_parallel_envs = num_envs
+        self.device = device
 
-        self.agent_ids = self.env.agents  # for consistent ordering (MPE envs have fixed agents)
-        self.num_agents = len(self.agent_ids)
+        self.num_agents = len(env.agents)  # not equal to self.env.agents, which is num_paralell_envs * num_agents
+        self.act_dim = env.action_space(env.agents[0]).n
 
-    def collect_rollout(self) -> torch.Tensor:
+    @torch.inference_mode()
+    def collect_rollout(self) -> Float[Tensor, "b agents"]:
         """Collect a rollout using the current policy. Returns value estimate for final state (for bootstrapping)."""
         observations, _ = self.env.reset()
         for step in range(self.buffer.cfg.size):
-            obs_tensor = self._dict_to_tensor(observations)
+            obs_reshaped = observations.reshape(self.num_parallel_envs, self.num_agents, -1)
+            obs_tensor = torch.as_tensor(obs_reshaped, device=self.device).float()
 
-            with torch.no_grad():
-                policy_output = self.policy.get_actions(obs=obs_tensor)
+            policy_output = self.policy.get_actions(obs=obs_tensor)
+            actions = policy_output.actions.cpu().numpy()  # (batch, agents)
+            observations, rewards, terminations, truncations, infos = self.env.step(actions.reshape(-1))
 
-            actions = {agent_id: action.cpu().numpy() for agent_id, action in zip(self.agent_ids, policy_output.actions)}
-            observations, rewards, terminations, truncations, infos = self.env.step(actions)
+            rewards = rewards.reshape(self.num_parallel_envs, self.num_agents, 1)
+            dones = (terminations | truncations).reshape(self.num_parallel_envs, self.num_agents)
 
             self.buffer.insert(
-                obs=obs_tensor.numpy(),
-                actions=policy_output.actions.numpy(),
-                action_log_probs=policy_output.action_log_probs.numpy(),
-                values=policy_output.values.numpy(),
-                rewards=self._dict_to_array(rewards),
-                dones=self._dict_to_array(terminations) | self._dict_to_array(truncations),
+                obs=obs_tensor.cpu().numpy(),
+                actions=actions[:, :, None],
+                action_log_probs=policy_output.action_log_probs.cpu().numpy(),
+                values=policy_output.values.squeeze(-1).cpu().numpy(),
+                rewards=rewards.squeeze(-1),
+                dones=dones,
                 active_masks=None,
             )
 
         # get value estimate for final state
-        obs_tensor = self._dict_to_tensor(observations)
-        with torch.no_grad():
-            next_values = self.policy.get_values(obs_tensor)
-
+        obs_reshaped = torch.tensor(observations.reshape(self.num_parallel_envs, self.num_agents, -1), device=self.device)
+        next_values = self.policy.get_values(obs_reshaped).squeeze(-1)
         return next_values
-
-    def _dict_to_tensor(self, obs_dict: dict[str, np.ndarray]) -> torch.Tensor:
-        """Convert dict of observations to tensor of shape (num_agents, *obs_shape)."""
-        return torch.tensor(np.stack([obs_dict[agent_id] for agent_id in self.agent_ids]), dtype=torch.float32)
-
-    def _dict_to_array(self, val_dict: dict[str, Any]) -> np.ndarray:
-        """Convert dict of values to array of shape (num_agents, 1)."""
-        return np.expand_dims(np.array([val_dict[agent_id] for agent_id in self.agent_ids]), axis=-1)

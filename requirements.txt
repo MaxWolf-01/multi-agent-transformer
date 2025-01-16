@@ -4,3 +4,4 @@ jaxtyping
 pygame
 gymnasium
 pettingzoo
+supersuit

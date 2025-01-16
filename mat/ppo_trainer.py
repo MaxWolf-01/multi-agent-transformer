@@ -125,42 +125,34 @@ class PPOTrainer:
             "mean_value_loss": 0.0,
             "last_grad_norm": 0.0,
         }
-        num_updates = self.cfg.num_epochs * self.cfg.num_minibatches
-
         for _ in range(self.cfg.num_epochs):
             for batch in self.runner.buffer.get_minibatches(num_minibatches=self.cfg.num_minibatches, device=self.cfg.device):
                 policy_output = self.policy(obs=batch.obs, actions=batch.actions)
-
                 policy_loss = self._compute_policy_loss(
                     action_log_probs=policy_output.action_log_probs,
                     old_action_log_probs=batch.old_action_log_probs,
                     advantages=batch.advantages,
                     active_masks=batch.active_masks,
                 )
-
                 value_loss = self._compute_value_loss(
                     values=policy_output.values,
                     returns=batch.returns,
                     old_values=batch.old_values if self.cfg.use_clipped_value_loss else None,
                     active_masks=batch.active_masks,
                 )
-
                 loss = policy_loss + value_loss
-
                 self.optimizer.zero_grad()
                 loss.backward()
-
                 grad_norm = torch.nn.utils.clip_grad_norm_(
                     self.policy.parameters(),
                     self.cfg.max_grad_norm,
                 )
-
                 self.optimizer.step()
 
                 metrics["mean_policy_loss"] += policy_loss.item()
                 metrics["mean_value_loss"] += value_loss.item()
                 metrics["last_grad_norm"] = grad_norm.item()
-
+        num_updates = self.cfg.num_epochs * self.cfg.num_minibatches
         metrics["mean_policy_loss"] /= num_updates
         metrics["mean_value_loss"] /= num_updates
         return metrics
@@ -176,7 +168,7 @@ class PPOTrainer:
         next_values = self.runner.collect_rollout()
 
         self.runner.buffer.compute_returns_and_advantages(
-            next_value=next_values.numpy(),
+            next_value=next_values.cpu().numpy(),
             gamma=self.cfg.gamma,
             gae_lambda=self.cfg.gae_lambda,
             normalize_advantage=self.cfg.normalize_advantage,
@@ -186,8 +178,8 @@ class PPOTrainer:
 
         mean_reward = float(self.runner.buffer.rewards.mean())
         self._metrics = Metrics(
-            policy_loss=episode_metrics["policy_loss"],
-            value_loss=episode_metrics["value_loss"],
+            policy_loss=episode_metrics["mean_policy_loss"],
+            value_loss=episode_metrics["mean_value_loss"],
             last_grad_norm=episode_metrics["last_grad_norm"],
             mean_reward=mean_reward,
         )

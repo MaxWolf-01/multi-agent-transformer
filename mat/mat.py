@@ -9,9 +9,9 @@ from mat.samplers import ContinuousSampler, DiscreteSampler
 
 
 class MATOutput(NamedTuple):
-    actions: Float[Tensor, "b agents act"] | Float[Tensor, "b agents 1"]
-    action_log_probs: Float[Tensor, "b agents act"] | Float[Tensor, "b agents 1"]
-    values: Float[Tensor, "b agents 1"]
+    actions: Float[Tensor, "b agents act"]
+    action_log_probs: Float[Tensor, "b agents act"]
+    values: Float[Tensor, "b agents"]
 
 
 class MAT(nn.Module):

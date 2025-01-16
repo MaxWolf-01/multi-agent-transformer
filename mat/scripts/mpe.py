@@ -14,21 +14,20 @@ from mat.samplers import DiscreteSampler, DiscreteSamplerConfig
 
 @dataclass
 class RunConfig:
+    n_parallel_envs: int = 32
     total_steps: int = 10_000_000
     log_every: int = 10
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def main():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    tensor_props = {"device": device, "dtype": torch.float32}
+    run_cfg = RunConfig()
 
     env = MPERunner.get_env(
-        env_id="simple_tag_v3",
+        env_id="simple_spread_v3",
         env_kwargs=dict(
-            num_good=1,
-            num_adversaries=3,
-            num_obstacles=2,
-            max_cycles=25,
+            N=3,  # num landmarks, num agents
+            max_cycles=(episode_length := 25),
             continuous_actions=False,
         ),
     )
@@ -51,24 +50,24 @@ def main():
         embed_dim=64,
         num_heads=1,
         num_agents=num_agents,
-        act_type="discrete",  # For simple_tag
+        act_type="discrete",  # mpe can be both
         dec_actor=False,
     )
 
     sampler_cfg = DiscreteSamplerConfig(
-        batch_size=25 * 32,  # buffer size * num_envs # TODO extract vars
         num_agents=num_agents,
         act_dim=act_dim,
-        tprops=tensor_props,
         start_token=1,
+        device=run_cfg.device,
+        dtype=torch.float32,
     )
 
     buffer_cfg = BufferConfig(
-        size=25,  # episode length
-        num_envs=32,
+        size=episode_length,
+        num_envs=run_cfg.n_parallel_envs,
         num_agents=num_agents,
-        obs_shape=obs_dim,
-        action_dim=act_dim,
+        obs_shape=(obs_dim,),
+        action_dim=1,  # discrete == index
     )
 
     trainer_cfg = TrainerConfig(
@@ -89,10 +88,8 @@ def main():
         normalize_advantage=True,
         use_huber_loss=True,
         huber_delta=10.0,
-        device=device,
+        device=run_cfg.device,
     )
-
-    run_cfg = RunConfig()
 
     encoder = mat.Encoder(encoder_cfg)
     decoder = mat.TransformerDecoder(decoder_cfg)
@@ -101,9 +98,10 @@ def main():
         encoder=encoder,
         decoder=decoder,
         sampler=sampler,
-    ).to(device)
+    ).to(run_cfg.device)
     buffer = Buffer(buffer_cfg)
-    runner = MPERunner(env, policy, buffer)
+    # runner = MPERunner(num_agents=num_agents, device, env, policy, buffer)
+    runner = MPERunner(env, policy, buffer, num_envs=run_cfg.n_parallel_envs, device=run_cfg.device)
     trainer = PPOTrainer(trainer_cfg, policy, runner)
 
     num_episodes = run_cfg.total_steps // (buffer_cfg.size * buffer_cfg.num_envs)

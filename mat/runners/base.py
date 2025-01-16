@@ -1,6 +1,8 @@
 import abc
 
 import torch
+from jaxtyping import Float
+from torch import Tensor
 
 from mat.buffer import Buffer
 
@@ -8,11 +10,12 @@ from mat.buffer import Buffer
 class EnvRunner(abc.ABC):
     """Handles environment interaction and data collection."""
 
-    def __init__(self, buffer: Buffer):
+    def __init__(self, device: str | torch.device, buffer: Buffer):
+        self.device = device
         self.buffer = buffer
 
     @abc.abstractmethod
-    def collect_rollout(self) -> torch.Tensor:
+    def collect_rollout(self) -> Float[Tensor, "b agents"]:
         """Run policy in environment and collect transitions. Return value estimate for final state."""
 
         # obs = self.env.reset()
