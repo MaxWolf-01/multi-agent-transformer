@@ -56,12 +56,12 @@ def main():
         metrics = trainer.train_episode()
         total_steps += steps_per_episode
         if episode % cfg.log_every == 0:
-            log_dict = {
-                "episode": f"episode/{num_episodes}",
+            log_dict: dict[str, int | float] = {
+                "episode": episode,
                 "total_steps": total_steps,
                 **asdict(metrics),
             }
-            pprint.pprint(log_dict)
+            pprint.pprint(log_dict | dict(episode=f"{episode}/{num_episodes}"))
             print("-" * 40)
             if cfg.wandb.enabled:
                 wandb.log(log_dict)
@@ -78,6 +78,7 @@ def get_config() -> MPEConfig:
     parser.add_argument("--envs", type=int, help="Number of parallel environments")
     parser.add_argument("--save_every", type=int, help="Save model every n steps")
     parser.add_argument("--save_best", action="store_true", help="Save best model")
+    parser.add_argument("--bs", type=int, help="Batch size")
     WandbArgumentHandler.add_args(parser)
     args = vars(parser.parse_args())
 
@@ -89,6 +90,7 @@ def get_config() -> MPEConfig:
     cfg.buffer.num_envs = cfg.n_parallel_envs
     cfg.save_every = args["save_every"] or cfg.save_every
     cfg.save_best = args["save_best"] or cfg.save_best
+    cfg.trainer.num_minibatches = args["bs"] or cfg.trainer.num_minibatches
     return cfg
 
 
@@ -112,7 +114,9 @@ class MPEConfig(ExperimentConfig):
 
     @classmethod
     def default(cls, scenario: str) -> MPEConfig:
-        """Default config follows simple spread config from: https://github.com/PKU-MARL/Multi-Agent-Transformer/blob/e3cac1e39c2429f3cab93f2cbaca84481ac6539a/mat/scripts/train_mpe.sh"""
+        """Default config follows simple spread config from: https://github.com/PKU-MARL/Multi-Agent-Transformer/blob/e3cac1e39c2429f3cab93f2cbaca84481ac6539a/mat/scripts/train_mpe.sh
+        NOTE: It's not a very good config. E.g. higher batch sizes work much better.
+        """
         env_kwargs = cls.default_env_kwargs[scenario]
         num_agents, episode_length, continuous_actions = 0, 0, False
         if scenario == "simple_spread_v3":
@@ -169,7 +173,7 @@ class MPEConfig(ExperimentConfig):
                 weight_decay=0.0,
                 max_grad_norm=0.5,
                 # PPO
-                num_epochs=10,
+                num_episodes=10,
                 num_minibatches=1,
                 clip_param=0.05,
                 value_loss_coef=1.0,

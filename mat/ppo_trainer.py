@@ -22,7 +22,7 @@ class TrainerConfig:
     weight_decay: float
     max_grad_norm: float
 
-    num_epochs: int
+    num_episodes: int
 
     # PPO
     num_minibatches: int
@@ -126,7 +126,7 @@ class PPOTrainer:
             "mean_value_loss": 0.0,
             "last_grad_norm": 0.0,
         }
-        for _ in range(self.cfg.num_epochs):
+        for _ in range(self.cfg.num_episodes):
             for batch in self.runner.buffer.get_minibatches(num_minibatches=self.cfg.num_minibatches, device=self.cfg.device):
                 policy_output = self.policy(obs=batch.obs, actions=batch.actions)
                 policy_loss = self._compute_policy_loss(
@@ -153,7 +153,7 @@ class PPOTrainer:
                 metrics["mean_policy_loss"] += policy_loss.item()
                 metrics["mean_value_loss"] += value_loss.item()
                 metrics["last_grad_norm"] = grad_norm.item()
-        num_updates = self.cfg.num_epochs * self.cfg.num_minibatches
+        num_updates = self.cfg.num_episodes * self.cfg.num_minibatches
         metrics["mean_policy_loss"] /= num_updates
         metrics["mean_value_loss"] /= num_updates
         return metrics
