@@ -14,8 +14,8 @@ from mat.samplers import DiscreteSampler, DiscreteSamplerConfig
 
 @dataclass
 class RunConfig:
-    n_parallel_envs: int = 32
-    total_steps: int = 10_000_000
+    n_parallel_envs: int = 128
+    total_steps: int = 20_000_000
     log_every: int = 10
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -25,10 +25,12 @@ def main():
 
     env = MPERunner.get_env(
         env_id="simple_spread_v3",
-        env_kwargs=dict(
-            N=3,  # num landmarks, num agents
-            max_cycles=(episode_length := 25),
-            continuous_actions=False,
+        env_kwargs=(
+            env_kwargs := dict(
+                N=3,  # num landmarks, num agents
+                max_cycles=(episode_length := 25),
+                continuous_actions=False,
+            )
         ),
     )
     env.reset()
@@ -38,11 +40,10 @@ def main():
 
     encoder_cfg = EncoderConfig(
         obs_dim=obs_dim,
-        depth=2,
+        depth=1,
         embed_dim=64,
         num_heads=1,
     )
-
     decoder_cfg = TransformerDecoderConfig(
         obs_dim=obs_dim,
         act_dim=act_dim,
@@ -53,7 +54,6 @@ def main():
         act_type="discrete",  # mpe can be both
         dec_actor=False,
     )
-
     sampler_cfg = DiscreteSamplerConfig(
         num_agents=num_agents,
         act_dim=act_dim,
@@ -72,14 +72,14 @@ def main():
 
     trainer_cfg = TrainerConfig(
         # optim
-        lr=5e-4,
+        lr=7e-4,
         eps=1e-5,
         weight_decay=0.0,
         max_grad_norm=0.5,
         # PPO
         num_epochs=10,
-        num_minibatches=4,
-        clip_param=0.2,
+        num_minibatches=1,
+        clip_param=0.05,
         value_loss_coef=1.0,
         entropy_coef=0.01,
         gamma=0.99,
@@ -101,7 +101,14 @@ def main():
     ).to(run_cfg.device)
     buffer = Buffer(buffer_cfg)
     # runner = MPERunner(num_agents=num_agents, device, env, policy, buffer)
-    runner = MPERunner(env, policy, buffer, num_envs=run_cfg.n_parallel_envs, device=run_cfg.device)
+    runner = MPERunner(
+        env,
+        policy,
+        buffer,
+        num_envs=run_cfg.n_parallel_envs,
+        device=run_cfg.device,
+        render_kwargs=env_kwargs | dict(render_mode="human"),
+    )
     trainer = PPOTrainer(trainer_cfg, policy, runner)
 
     num_episodes = run_cfg.total_steps // (buffer_cfg.size * buffer_cfg.num_envs)
