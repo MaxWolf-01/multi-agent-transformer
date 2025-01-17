@@ -13,11 +13,12 @@ from mat.buffer import Buffer, BufferConfig
 from mat.decoder import TransformerDecoderConfig
 from mat.encoder import EncoderConfig
 from mat.mat import MAT
+from mat.paths import Paths
 from mat.ppo_trainer import PPOTrainer, TrainerConfig
 from mat.runners.mpe import MPERunner
 from mat.samplers import DiscreteSampler, DiscreteSamplerConfig
 from mat.scripts.config import ExperimentConfig
-from mat.utils import WandbArgumentHandler, WandbConfig
+from mat.utils import ModelCheckpointer, WandbArgumentHandler, WandbConfig
 
 
 def main():
@@ -45,6 +46,8 @@ def main():
             name=cfg.wandb.name,
             tags=cfg.wandb.tags,
         )
+    checkpointer = ModelCheckpointer(save_dir=Paths.CKPTS, prefix=cfg.wandb.name)
+    pprint.pprint(cfg)
 
     steps_per_episode = cfg.buffer.size * cfg.n_parallel_envs
     num_episodes = cfg.total_steps // steps_per_episode
@@ -54,7 +57,7 @@ def main():
         total_steps += steps_per_episode
         if episode % cfg.log_every == 0:
             log_dict = {
-                "episode": episode,
+                "episode": f"episode/{num_episodes}",
                 "total_steps": total_steps,
                 **asdict(metrics),
             }
@@ -62,6 +65,10 @@ def main():
             print("-" * 40)
             if cfg.wandb.enabled:
                 wandb.log(log_dict)
+        if cfg.save_every is not None or cfg.save_best:
+            checkpointer.save(
+                model=policy, step=episode, save_every_n=cfg.save_every, metric=metrics.mean_reward if cfg.save_best else None
+            )
 
 
 def get_config() -> MPEConfig:
@@ -69,6 +76,8 @@ def get_config() -> MPEConfig:
     parser.add_argument("--scenario", choices=list(MPERunner.SUPPORTED_ENVS.keys()), default="simple_spread_v3")
     parser.add_argument("--render", action="store_true", help="Render the environment")
     parser.add_argument("--envs", type=int, help="Number of parallel environments")
+    parser.add_argument("--save_every", type=int, help="Save model every n steps")
+    parser.add_argument("--save_best", action="store_true", help="Save best model")
     WandbArgumentHandler.add_args(parser)
     args = vars(parser.parse_args())
 
@@ -78,7 +87,8 @@ def get_config() -> MPEConfig:
     cfg.render = args["render"] or cfg.render
     cfg.n_parallel_envs = args["envs"] or cfg.n_parallel_envs
     cfg.buffer.num_envs = cfg.n_parallel_envs
-
+    cfg.save_every = args["save_every"] or cfg.save_every
+    cfg.save_best = args["save_best"] or cfg.save_best
     return cfg
 
 
@@ -87,6 +97,8 @@ class MPEConfig(ExperimentConfig):
     env_id: str
     env_kwargs: dict[str, Any]
     render: bool
+    save_every: int | None
+    save_best: bool
 
     default_env_kwargs = dict(
         simple_spread_v3=dict(
@@ -118,6 +130,8 @@ class MPEConfig(ExperimentConfig):
             env_id=scenario,
             env_kwargs=env_kwargs,
             render=False,
+            save_every=None,
+            save_best=True,
             encoder=EncoderConfig(
                 obs_dim=obs_dim,  # env.observation_space(env.aec_env.agents[0]).shape[0]
                 depth=1,

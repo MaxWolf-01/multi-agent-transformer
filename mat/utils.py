@@ -2,9 +2,11 @@ import argparse
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import numpy as np
+import torch
 from jaxtyping import Float
 from torch import nn
 
@@ -89,3 +91,42 @@ def get_run_name(name: str | None = None) -> str:
 
 def short_uuid(n: int = 8) -> str:
     return str(uuid.uuid4())[:n]
+
+
+class ModelCheckpointer:
+    def __init__(self, save_dir: str | Path, prefix: str = ""):
+        self.save_dir = Path(save_dir)
+        self.save_dir.mkdir(parents=True, exist_ok=True)
+        self.prefix = prefix
+        self.best_metric = float("-inf")
+        self.best_path = None
+
+    def save(
+        self,
+        model: nn.Module,
+        step: int | None = None,
+        save_every_n: int | None = None,
+        metric: float | None = None,
+        optimizer: torch.optim.Optimizer | None = None,
+    ) -> None:
+        """Skips saving if:
+        - Metric is provided and worse than the best metric seen
+        - Step and save_every_n are provided, but current step is not a multiple of save_every_n
+        """
+        if (metric and metric < self.best_metric) or (step and save_every_n and step % save_every_n != 0):
+            return
+        state = {
+            "model": model.state_dict(),
+            "step": step,
+            "metric": metric,
+            "optimizer": optimizer.state_dict() if optimizer else None,
+        }
+        step_info = f"_{step}" if step else ""
+        metric_info = f"_{metric:.3f}(best)" if metric else ""
+        filepath = self.save_dir / f"{self.prefix}{step_info}{metric_info}.pt"
+        torch.save(state, filepath)
+        if metric and metric > self.best_metric:
+            if self.best_path:
+                self.best_path.unlink()
+            self.best_path = filepath
+            self.best_metric = metric
