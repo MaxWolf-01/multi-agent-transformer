@@ -15,7 +15,7 @@ from mat.decoder import DecentralizedMlpDecoder, TransformerDecoder
 class SamplerConfig:
     num_agents: int
     act_dim: int
-    device: torch.device
+    device: str | torch.device
     dtype: torch.dtype
 
 
@@ -117,7 +117,7 @@ class DiscreteSampler(Sampler):
         return action, dist.log_prob(action)
 
 
-class ContinuousDiscreteSample(NamedTuple):
+class ContinuousAutoregressiveSample(NamedTuple):
     actions: Float[Tensor, "b agents act"]
     log_probs: Float[Tensor, "b agents act"]
 
@@ -144,7 +144,7 @@ class ContinuousSampler(Sampler):
         encoded_obs: Float[Tensor, "b agents emb"] | None = None,
         raw_obs: Float[Tensor, "b agents obs"] | None = None,
         deterministic: bool = False,
-    ) -> ContinuousDiscreteSample:
+    ) -> ContinuousAutoregressiveSample:
         batch_size = get_batch_size(encoded_obs, raw_obs)
         actions = []
         log_probs = []
@@ -160,7 +160,7 @@ class ContinuousSampler(Sampler):
             if i + 1 < self.cfg.num_agents and isinstance(decoder, TransformerDecoder):
                 action_history[:, i + 1, :] = action
 
-        return ContinuousDiscreteSample(actions=torch.stack(actions, dim=1), log_probs=torch.stack(log_probs, dim=1))
+        return ContinuousAutoregressiveSample(actions=torch.stack(actions, dim=1), log_probs=torch.stack(log_probs, dim=1))
 
     def parallel(
         self,
