@@ -21,17 +21,28 @@ class MPERunner(EnvRunner):
             raise ValueError(f"Unknown MPE environment: {env_id}")
         return MPERunner.SUPPORTED_ENVS[env_id](**env_kwargs)
 
-    def __init__(self, env, policy: MAT, buffer: Buffer, num_envs: int, device: str | torch.device, render_kwargs: dict | None):
+    def __init__(
+        self,
+        env_id: str,
+        env_kwargs: dict,
+        policy: MAT,
+        buffer: Buffer,
+        num_envs: int,
+        device: str | torch.device,
+        render: bool = False,
+    ):
         """If render_kwargs is given, a separate env for rendering will be created."""
         super().__init__(device, buffer)
+        env = self.get_env(env_id, env_kwargs)
         self.env = ss.concat_vec_envs_v1(ss.pettingzoo_env_to_vec_env_v1(env), num_vec_envs=num_envs)
-        self.render_env = self.get_env(env_id=env.metadata["name"], env_kwargs=render_kwargs) if render_kwargs else None
+        self.render_env = self.get_env(env_id=env_id, env_kwargs=env_kwargs | dict(render_mode="human")) if render else None
         self.policy = policy
         self.buffer = buffer
         self.num_parallel_envs = num_envs
         self.device = device
 
-        self.num_agents = len(env.agents)  # not equal to self.env.agents, which is num_paralell_envs * num_agents
+        env.reset()  # required to access agents / num_agents attribute
+        self.num_agents = env.num_agents  # not equal to self.env.agents, which is num_paralell_envs * num_agents
         self.act_dim = env.action_space(env.agents[0]).n
 
     @torch.inference_mode()

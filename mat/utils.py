@@ -1,3 +1,9 @@
+import argparse
+import uuid
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+
 import numpy as np
 from jaxtyping import Float
 from torch import nn
@@ -36,3 +42,50 @@ def get_gae_returns_and_advantages(
         last_advantage = advantages[t]
     returns = advantages + values
     return returns, advantages
+
+
+@dataclass
+class WandbConfig:
+    id: str | None = None
+    enabled: bool = False
+    project: str | None = None
+    name: str | None = None
+    tags: list[str] | None = None
+    entity: str | None = None
+
+
+@dataclass
+class WandbArgumentHandler:
+    """Handles argument parsing and configuration for wandb logging"""
+
+    enable: str = "wandb"
+    project: str = "project"
+    name: str = "name"
+    tags: str = "tags"
+    entity: str = "entity"
+
+    @classmethod
+    def add_args(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(f"--{cls.enable}", action="store_true", help="Use Weights & Biases logger")
+        parser.add_argument(f"--{cls.project}", type=str, help="Name of the Weights & Biases project")
+        parser.add_argument(f"--{cls.name}", type=str, help="Name for the Weights & Biases run")
+        parser.add_argument(f"--{cls.tags}", nargs="+", help="Tags for the run. Example usage: --tags t1 t2 t3")
+        parser.add_argument(f"--{cls.entity}", type=str, help="Wandb entity")
+
+    @classmethod
+    def update_config(cls, args: dict[str, Any], config: Any) -> None:
+        config.wandb.enabled = args[cls.enable]
+        config.wandb.project = args[cls.project] or config.wandb.project
+        config.wandb.name = get_run_name(args[cls.name] or config.wandb.name)
+        config.wandb.tags = args[cls.tags] or config.wandb.tags
+        config.wandb.entity = args[cls.entity] or config.wandb.entity
+
+
+def get_run_name(name: str | None = None) -> str:
+    timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
+    base_name = name if name is not None else f"no_name_{short_uuid(4)}"
+    return f"{base_name}-{timestamp}"
+
+
+def short_uuid(n: int = 8) -> str:
+    return str(uuid.uuid4())[:n]

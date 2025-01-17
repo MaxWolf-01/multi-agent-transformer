@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, NamedTuple
+from typing import Any
 
 import torch
 import torch.nn.functional as F
@@ -36,10 +36,11 @@ class TrainerConfig:
     use_huber_loss: bool
     huber_delta: float
 
-    device: torch.device
+    device: str | torch.device
 
 
-class Metrics(NamedTuple):
+@dataclass
+class Metrics:
     """Metrics from a training episode."""
 
     policy_loss: float

@@ -5,3 +5,4 @@ pygame
 gymnasium
 pettingzoo
 supersuit
+wandb
