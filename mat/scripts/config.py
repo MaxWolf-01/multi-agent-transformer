@@ -1,6 +1,6 @@
 import argparse
 from dataclasses import dataclass
-
+from typing import Any
 
 from mat.buffer import BufferConfig
 from mat.decoder import (
@@ -13,7 +13,7 @@ from mat.samplers import (
     ContinousSamplerConfig,
     DiscreteSamplerConfig,
 )
-from mat.utils import WandbArgumentHandler, WandbConfig
+from mat.utils import WandbConfig
 
 
 @dataclass(kw_only=True, slots=True)
@@ -30,18 +30,27 @@ class ExperimentConfig:
     device: str
 
 
-def add_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--episodes", type=int, help="Episode length")
-    parser.add_argument("--envs", type=int, help="Number of parallel environments")
-    parser.add_argument("--steps", type=int, help="Total number of steps to train")
-    parser.add_argument("--log", type=int, help="Log frequency (in episodes)")
-    WandbArgumentHandler.add_args(parser)
+@dataclass
+class ExperimentArgumentHandler:
+    lr: str = "lr"
+    envs: str = "envs"
+    steps: str = "steps"
+    log_every: str = "log_every"
+    epochs: str = "epochs"
 
+    @classmethod
+    def add_args(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(f"--{cls.lr}", type=float, help="Learning rate")
+        parser.add_argument(f"--{cls.envs}", type=int, help="Number of parallel environments")
+        parser.add_argument(f"--{cls.steps}", type=int, help="Total number of training steps")
+        parser.add_argument(f"--{cls.log_every}", type=int, help="Log frequency in episodes")
+        parser.add_argument(f"--{cls.epochs}", type=int, help="Number of epochs to train")
 
-def update_config_from_args(parser: argparse.ArgumentParser, config: ExperimentConfig) -> ExperimentConfig:
-    args = vars(parser.parse_args())
-    WandbArgumentHandler.update_config(args, config)
-    config.n_parallel_envs = args["envs"]
-    config.total_steps = args["steps"]
-    config.log_every = args["log"]
-    return config
+    @classmethod
+    def update_config(cls, args: dict[str, Any], config: ExperimentConfig) -> None:
+        config.trainer.lr = args[cls.lr] or config.trainer.lr
+        config.n_parallel_envs = args[cls.envs] or config.n_parallel_envs
+        config.buffer.num_envs = args[cls.envs] or config.n_parallel_envs
+        config.total_steps = args[cls.steps] or config.total_steps
+        config.log_every = args[cls.log_every] or config.log_every
+        config.trainer.num_epochs = args[cls.epochs] or config.trainer.num_epochs
