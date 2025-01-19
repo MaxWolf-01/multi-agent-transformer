@@ -26,6 +26,7 @@ class BufferConfig:
     num_agents: int
     obs_shape: tuple[int, ...]
     action_dim: int
+    active_masks: bool = False
 
 
 class Buffer:
@@ -46,7 +47,7 @@ class Buffer:
         self.obs = np.zeros((size + 1, num_envs, num_agents, *cfg.obs_shape), dtype=np.float32)
         self.dones = np.zeros((size + 1, num_envs, num_agents), dtype=np.float32)
         # optional mask for inactive agents (e.g., dead agents in some environments)
-        self.active_masks = np.ones((size + 1, num_envs, num_agents), dtype=np.float32)
+        self.active_masks = np.ones((size + 1, num_envs, num_agents), dtype=np.float32) if cfg.active_masks else None
         # computed after collecting complete trajectory
         self.returns = None
         self.advantages = None
@@ -132,7 +133,8 @@ class Buffer:
         """Last timestep becomes starting point for the next. Called after policy update."""
         self.obs[0] = self.obs[-1]
         self.dones[0] = self.dones[-1]
-        self.active_masks[0] = self.active_masks[-1]
+        if self.active_masks is not None:
+            self.active_masks[0] = self.active_masks[-1]
 
         self.returns = None
         self.advantages = None

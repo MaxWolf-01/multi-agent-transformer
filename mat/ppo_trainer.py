@@ -107,7 +107,7 @@ class PPOTrainer:
                 entropy = (
                     policy_out.entropy.mean()
                     if batch.active_masks is None
-                    else (policy_out.entropy * batch.active_masks[:-1]).sum() / batch.active_masks[:-1].sum()
+                    else (policy_out.entropy * batch.active_masks).sum() / batch.active_masks.sum()
                 )
                 loss = -(policy_objective - value_loss * self.cfg.value_loss_coef + entropy * self.cfg.entropy_coef)
                 self.optimizer.zero_grad()
