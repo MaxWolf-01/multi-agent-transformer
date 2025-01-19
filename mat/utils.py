@@ -22,27 +22,22 @@ def init_weights(m: nn.Module, gain: float = 0.01, use_relu_gain: bool = False):
 
 def get_gae_returns_and_advantages(
     rewards: Float[np.ndarray, "steps envs agents"],
-    values: Float[np.ndarray, "steps envs agents"],
-    next_value: Float[np.ndarray, "envs agents"],
+    values: Float[np.ndarray, "step envs agents"],
+    dones: Float[np.ndarray, "steps envs agents"],
     gamma: float,
     gae_lambda: float,
 ) -> tuple[Float[np.ndarray, "steps envs agents"], Float[np.ndarray, "steps envs agents"]]:
     """Compute returns and advantages using Generalized Advantage Estimation (GAE)"""
     steps = rewards.shape[0]
     advantages = np.zeros_like(rewards)
-    last_advantage = np.zeros_like(next_value)
-
+    last_gae = 0
+    nonterminal_mask = 1 - dones
     for t in reversed(range(steps)):
-        if t == steps - 1:
-            next_value_t = next_value
-        else:
-            next_value_t = values[t + 1]
         # TD error = r_t + γV(s_{t+1}) - V(s_t)
-        delta = rewards[t] + gamma * next_value_t - values[t]
+        delta = rewards[t] + gamma * values[t + 1] * nonterminal_mask[t] - values[t]
         # GAE = sum (γλ)^k δ_{t+k} | Computed recursively: A_t = δ_t + γλA_{t+1}
-        advantages[t] = delta + gamma * gae_lambda * last_advantage
-        last_advantage = advantages[t]
-    returns = advantages + values
+        last_gae = advantages[t] = delta + gamma * gae_lambda * last_gae * nonterminal_mask[t]
+    returns = advantages + values[:-1]
     return returns, advantages
 
 

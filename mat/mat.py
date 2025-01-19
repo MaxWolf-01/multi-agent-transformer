@@ -1,4 +1,4 @@
-from typing import NamedTuple
+from dataclasses import dataclass
 
 from jaxtyping import Float
 from torch import Tensor, nn
@@ -8,10 +8,16 @@ from mat.encoder import Encoder
 from mat.samplers import ContinuousSampler, DiscreteSampler
 
 
-class MATOutput(NamedTuple):
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MATInferenceOutput:
     actions: Float[Tensor, "b agents act"]
     action_log_probs: Float[Tensor, "b agents act"]
-    values: Float[Tensor, "b agents"]
+    values: Float[Tensor, "b agents 1"]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)  # NamedTuple doesn't support inheritance
+class MATTrainingOutput(MATInferenceOutput):
+    entropy: Float[Tensor, "b"]
 
 
 class MAT(nn.Module):
@@ -34,22 +40,22 @@ class MAT(nn.Module):
         obs: Float[Tensor, "b agents obs"],
         actions: Float[Tensor, "b agents act"],
         available_actions: Float[Tensor, "b agents act"] | None = None,
-    ) -> MATOutput:
+    ) -> MATTrainingOutput:
         values, encoded_obs = self.encoder(obs)
         kwargs = self._get_sampler_kwargs(encoded_obs=encoded_obs, obs=obs, available_actions=available_actions)
         action_log_probs, entropy = self.sampler.parallel(actions=actions, decoder=self.decoder, **kwargs)
-        return MATOutput(actions=actions, action_log_probs=action_log_probs, values=values)
+        return MATTrainingOutput(actions=actions, action_log_probs=action_log_probs, values=values, entropy=entropy)
 
     def get_actions(
         self,
         obs: Float[Tensor, "b agents obs"],
         available_actions: Float[Tensor, "b agents act"] | None = None,
         deterministic: bool = False,
-    ) -> MATOutput:
+    ) -> MATInferenceOutput:
         values, encoded_obs = self.encoder(obs)
         kwargs = self._get_sampler_kwargs(encoded_obs=encoded_obs, obs=obs, available_actions=available_actions)
         actions, action_log_probs = self.sampler.autoregressive(decoder=self.decoder, deterministic=deterministic, **kwargs)
-        return MATOutput(actions=actions, action_log_probs=action_log_probs, values=values)
+        return MATInferenceOutput(actions=actions, action_log_probs=action_log_probs, values=values)
 
     def get_values(self, obs: Float[Tensor, "b agents obs"]) -> Float[Tensor, "b agents 1"]:
         values, _ = self.encoder(obs)

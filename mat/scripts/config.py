@@ -35,16 +35,16 @@ class ExperimentArgumentHandler:
     lr: str = "lr"
     envs: str = "envs"
     steps: str = "steps"
-    log_every: str = "log_every"
-    episodes: str = "episodes"
+    log_every: str = "log"
+    ppo_epochs: str = "ppo-epochs"
 
     @classmethod
     def add_args(cls, parser: argparse.ArgumentParser) -> None:
         parser.add_argument(f"--{cls.lr}", type=float, help="Learning rate")
         parser.add_argument(f"--{cls.envs}", type=int, help="Number of parallel environments")
         parser.add_argument(f"--{cls.steps}", type=int, help="Total number of training steps")
-        parser.add_argument(f"--{cls.log_every}", type=int, help="Log frequency in episodes")
-        parser.add_argument(f"--{cls.episodes}", type=int, help="Number of episodes to train")
+        parser.add_argument(f"--{cls.log_every}", type=int, help="Log frequency in iterations")
+        parser.add_argument(f"--{cls.ppo_epochs}", type=int, help="Number of epochs over a trajectory")
 
     @classmethod
     def update_config(cls, args: dict[str, Any], config: ExperimentConfig) -> None:
@@ -53,4 +53,4 @@ class ExperimentArgumentHandler:
         config.buffer.num_envs = args[cls.envs] or config.n_parallel_envs
         config.total_steps = args[cls.steps] or config.total_steps
         config.log_every = args[cls.log_every] or config.log_every
-        config.trainer.num_episodes = args[cls.episodes] or config.trainer.num_episodes
+        config.trainer.num_ppo_epochs = args[cls.ppo_epochs] or config.trainer.num_ppo_epochs

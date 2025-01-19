@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import NamedTuple
+from typing import Iterator, NamedTuple
 
 import numpy as np
 import torch
@@ -9,33 +9,27 @@ from torch import Tensor
 from mat.utils import get_gae_returns_and_advantages
 
 
+class Trajectory(NamedTuple):
+    obs: Float[Tensor, "batch agents *obs_shape"]  # batch = trajecotry length, agents = number of agents
+    actions: Float[Tensor, "batch agents act"]  # act = scalar index if discrete, vector if continuous
+    old_values: Float[Tensor, "batch agents"]
+    old_action_log_probs: Float[Tensor, "batch agents act"]
+    advantages: Float[Tensor, "batch agents"]
+    returns: Float[Tensor, "batch agents"]
+    active_masks: Float[Tensor, "batch agents"] | None
+
+
 @dataclass
 class BufferConfig:
     size: int
     num_envs: int
     num_agents: int
     obs_shape: tuple[int, ...]
-    action_dim: int  # scalar index if discrete, vector if continuous
-
-
-class BufferSample(NamedTuple):
-    """Data sampled from buffer for PPO updates.
-    All tensors have shape (batch_size, num_agents, feature_dims) where batch_size = num_envs * rollout_steps.
-    """
-
-    obs: Float[Tensor, "batch agents *obs_shape"]
-    actions: Float[Tensor, "batch agents act"]  # scalar index if discrete, vector if continuous
-    old_values: Float[Tensor, "batch agents"]
-    old_action_log_probs: Float[Tensor, "batch agents act"]  # scalar index if discrete, vector if continuous
-    advantages: Float[Tensor, "batch agents"]
-    returns: Float[Tensor, "batch agents"]
-    active_masks: Float[Tensor, "batch agents"] | None
+    action_dim: int
 
 
 class Buffer:
-    # TODO why not store as just (size, num_agents, *) or (size, *)?
     """Stores trajectories collected from multiple parallel environments.
-
     - Uses a circular buffer with size+1 slots for observations/values because we need the final state's value estimate for bootstrapping returns
     - self.step tracks current position in circular buffer (0 to size-1)
     - self.full indicates whether we've collected a complete trajectory worth of data
@@ -44,15 +38,13 @@ class Buffer:
     def __init__(self, config: BufferConfig):
         self.cfg = config
         cfg, size, num_envs, num_agents = config, config.size, config.num_envs, config.num_agents
-
-        # add extra step (+1) to observations/values/dones for bootstrapping returns computation
-        self.obs = np.zeros((size + 1, num_envs, num_agents, *cfg.obs_shape), dtype=np.float32)
-        self.values = np.zeros((size + 1, num_envs, num_agents), dtype=np.float32)
-        self.dones = np.zeros((size + 1, num_envs, num_agents), dtype=np.float32)
-        # regular trajectory data
+        self.values = np.zeros((size, num_envs, num_agents), dtype=np.float32)
         self.actions = np.zeros((size, num_envs, num_agents, cfg.action_dim), dtype=np.float32)
         self.action_log_probs = np.zeros((size, num_envs, num_agents), dtype=np.float32)
         self.rewards = np.zeros((size, num_envs, num_agents), dtype=np.float32)
+        # +1 to observations/dones/masks for last observation -> start of next trajectory; last val is passed separately
+        self.obs = np.zeros((size + 1, num_envs, num_agents, *cfg.obs_shape), dtype=np.float32)
+        self.dones = np.zeros((size + 1, num_envs, num_agents), dtype=np.float32)
         # optional mask for inactive agents (e.g., dead agents in some environments)
         self.active_masks = np.ones((size + 1, num_envs, num_agents), dtype=np.float32)
         # computed after collecting complete trajectory
@@ -65,8 +57,8 @@ class Buffer:
     def insert(
         self,
         obs: Float[np.ndarray, "envs agents *obs_shape"],
-        actions: Float[np.ndarray, "envs agents act"],  # scalar index if discrete, vector if continuous
-        action_log_probs: Float[np.ndarray, "envs agents act"],  # scalar index if discrete, vector if continuous
+        actions: Float[np.ndarray, "envs agents act"],
+        action_log_probs: Float[np.ndarray, "envs agents act"],
         values: Float[np.ndarray, "envs agents"],
         rewards: Float[np.ndarray, "envs agents"],
         dones: Float[np.ndarray, "envs agents"],
@@ -74,12 +66,9 @@ class Buffer:
     ) -> None:
         """Insert a new transition into the buffer.
 
-        The +1 offset for obs/dones/masks aligns the data so that for calling this method at step t:
-        - obs[t+1] is the observation after taking action[t]
-        - action[t] is the action taken in state obs[t]
-        - reward[t] is the reward received after action[t]
-        - done[t+1] indicates if obs[t+1] was terminal
-        - values[t] is the estimated value of obs[t]
+        Uses +1 offset for state data (obs, dones, active_masks) so that at step t:
+        - obs[t+1], done[t+1] represent the state after taking action[t]
+        - action[t], reward[t], value[t] represent what happened in state obs[t]
         """
         self.obs[self.step + 1] = obs
         self.actions[self.step] = actions
@@ -94,24 +83,7 @@ class Buffer:
         if self.step == 0:
             self.full = True
 
-    def compute_returns_and_advantages(
-        self,
-        next_value: Float[np.ndarray, "envs agents"],
-        gamma: float,
-        gae_lambda: float,
-        normalize_advantage: bool = True,
-    ) -> None:
-        self.returns, self.advantages = get_gae_returns_and_advantages(
-            rewards=self.rewards,
-            values=self.values[:-1],  # remove last value used for bootstrap (because it requires next_value)
-            next_value=next_value,
-            gamma=gamma,
-            gae_lambda=gae_lambda,
-        )
-        if normalize_advantage:
-            self.advantages = (self.advantages - self.advantages.mean()) / (self.advantages.std() + 1e-8)
-
-    def get_minibatches(self, num_minibatches: int, device: torch.device) -> BufferSample:
+    def get_minibatches(self, num_minibatches: int, device: torch.device) -> Iterator[Trajectory]:
         """
         Flattens the env and time dimensions to create a batch of transitions (batch_size, *dims) , then splits this batch into minibatches.
         We remove the final observation/value since they were only needed for bootstrapping returns computation.
@@ -125,18 +97,36 @@ class Buffer:
             end_idx = start_idx + mini_batch_size
             mb_inds = indices[start_idx:end_idx]
 
-            def _cast(x: np.ndarray) -> torch.Tensor:  # (size+1, num_envs, num_agents, *) -> (bs, num_agents, *)
-                return torch.from_numpy(x.reshape(-1, *x.shape[2:])[mb_inds]).to(device)
+            def _get_minibatch(x: np.ndarray) -> torch.Tensor:  # (size, num_envs, num_agents, *) -> (bs, num_agents, *)
+                return torch.as_tensor(x.reshape(-1, *x.shape[2:])[mb_inds], device=device)
 
-            yield BufferSample(
-                obs=_cast(self.obs[:-1]),
-                actions=_cast(self.actions),
-                old_values=_cast(self.values[:-1]),
-                old_action_log_probs=_cast(self.action_log_probs),
-                advantages=_cast(self.advantages),
-                returns=_cast(self.returns),
-                active_masks=_cast(self.active_masks[:-1]) if self.active_masks is not None else None,
+            yield Trajectory(
+                obs=_get_minibatch(self.obs[:-1]),
+                actions=_get_minibatch(self.actions),
+                old_values=_get_minibatch(self.values),
+                old_action_log_probs=_get_minibatch(self.action_log_probs),
+                advantages=_get_minibatch(self.advantages),
+                returns=_get_minibatch(self.returns),
+                active_masks=_get_minibatch(self.active_masks[:-1]) if self.active_masks is not None else None,
             )
+
+    def compute_returns_and_advantages(
+        self,
+        last_value: Float[np.ndarray, "envs agents"],
+        gamma: float,
+        gae_lambda: float,
+        normalize_advantage: bool,
+    ) -> None:
+        self.returns, self.advantages = get_gae_returns_and_advantages(
+            rewards=self.rewards,
+            values=np.concatenate([self.values, last_value[None]]),
+            dones=self.dones[:-1],
+            gamma=gamma,
+            gae_lambda=gae_lambda,
+        )
+        if normalize_advantage:
+            advantages = self.advantages * self.active_masks[:-1] if self.active_masks is not None else self.advantages
+            self.advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
     def after_update(self) -> None:
         """Last timestep becomes starting point for the next. Called after policy update."""

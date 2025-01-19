@@ -49,25 +49,25 @@ def main():
     checkpointer = ModelCheckpointer(save_dir=Paths.CKPTS, prefix=cfg.wandb.name)
     pprint.pprint(cfg)
 
-    steps_per_episode = cfg.buffer.size * cfg.n_parallel_envs
-    num_episodes = cfg.total_steps // steps_per_episode
+    steps_per_it = cfg.buffer.size * cfg.n_parallel_envs
+    num_iterations = cfg.total_steps // steps_per_it
     total_steps = 0
-    for episode in range(num_episodes):
-        metrics = trainer.train_episode()
-        total_steps += steps_per_episode
-        if episode % cfg.log_every == 0:
+    for i in range(num_iterations):
+        metrics = trainer.train_iteration()
+        total_steps += steps_per_it
+        if i % cfg.log_every == 0:
             log_dict: dict[str, int | float] = {
-                "episode": episode,
+                "iteration": i,
                 "total_steps": total_steps,
                 **asdict(metrics),
             }
-            pprint.pprint(log_dict | dict(episode=f"{episode}/{num_episodes}"))
+            pprint.pprint(log_dict | dict(iteration=f"{i}/{num_iterations}"))
             print("-" * 40)
             if cfg.wandb.enabled:
                 wandb.log(log_dict)
         if cfg.save_every is not None or cfg.save_best:
             checkpointer.save(
-                model=policy, step=episode, save_every_n=cfg.save_every, metric=metrics.mean_reward if cfg.save_best else None
+                model=policy, step=i, save_every_n=cfg.save_every, metric=metrics.mean_reward if cfg.save_best else None
             )
 
 
@@ -114,9 +114,7 @@ class MPEConfig(ExperimentConfig):
 
     @classmethod
     def default(cls, scenario: str) -> MPEConfig:
-        """Default config follows simple spread config from: https://github.com/PKU-MARL/Multi-Agent-Transformer/blob/e3cac1e39c2429f3cab93f2cbaca84481ac6539a/mat/scripts/train_mpe.sh
-        NOTE: It's not a very good config. E.g. higher batch sizes work much better.
-        """
+        """Default config follows simple spread config from: https://github.com/PKU-MARL/Multi-Agent-Transformer/blob/e3cac1e39c2429f3cab93f2cbaca84481ac6539a/mat/scripts/train_mpe.sh"""
         env_kwargs = cls.default_env_kwargs[scenario]
         num_agents, episode_length, continuous_actions = 0, 0, False
         if scenario == "simple_spread_v3":
@@ -173,7 +171,7 @@ class MPEConfig(ExperimentConfig):
                 weight_decay=0.0,
                 max_grad_norm=0.5,
                 # PPO
-                num_episodes=10,
+                num_ppo_epochs=10,
                 num_minibatches=1,
                 clip_param=0.05,
                 value_loss_coef=1.0,

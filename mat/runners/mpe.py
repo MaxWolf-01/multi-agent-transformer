@@ -35,7 +35,6 @@ class MPERunner(EnvRunner):
         super().__init__(device, buffer)
         env = self.get_env(env_id, env_kwargs)
         self.env = ss.concat_vec_envs_v1(ss.pettingzoo_env_to_vec_env_v1(env), num_vec_envs=num_envs)
-        self.render_env = self.get_env(env_id=env_id, env_kwargs=env_kwargs | dict(render_mode="human")) if render else None
         self.policy = policy
         self.buffer = buffer
         self.num_parallel_envs = num_envs
@@ -43,48 +42,40 @@ class MPERunner(EnvRunner):
 
         env.reset()  # required to access agents / num_agents attribute
         self.num_agents = env.num_agents  # not equal to self.env.agents, which is num_paralell_envs * num_agents
-        self.act_dim = env.action_space(env.agents[0]).n
+
+        self.next_obs = self._get_reshaped_obs_tensor(self.env.reset()[0])
+        self.render_env = self.get_env(env_id=env_id, env_kwargs=env_kwargs | dict(render_mode="human")) if render else None
+        self.render_obs, _ = self.render_env.reset() if render else (None, None)
 
     @torch.inference_mode()
     def collect_rollout(self) -> Float[Tensor, "b agents"]:
-        """Collect a rollout using the current policy. Returns value estimate for final state (for bootstrapping)."""
-        observations, _ = self.env.reset()
-        render_obs = self.render_env.reset()[0] if self.render_env is not None else None
+        """Collects a rollout using the current policy and returns value the estimate for final state."""
         for step in range(self.buffer.cfg.size):
-            obs_reshaped = observations.reshape(self.num_parallel_envs, self.num_agents, -1)
-            obs_tensor = torch.as_tensor(obs_reshaped, device=self.device).float()
-
-            policy_output = self.policy.get_actions(obs=obs_tensor)
+            policy_output = self.policy.get_actions(obs=(obs := self.next_obs))
             actions = policy_output.actions.cpu().numpy()  # (batch, agents)
-            observations, rewards, terminations, truncations, infos = self.env.step(actions.reshape(-1))
-
-            rewards = rewards.reshape(self.num_parallel_envs, self.num_agents, 1)
-            dones = (terminations | truncations).reshape(self.num_parallel_envs, self.num_agents)
-
+            self.next_obs, rewards, terminations, truncations, infos = self.env.step(actions.reshape(-1))
+            self.next_obs = self._get_reshaped_obs_tensor(self.next_obs)
             self.buffer.insert(
-                obs=obs_tensor.cpu().numpy(),
+                obs=obs.cpu().numpy(),
                 actions=actions[:, :, None],
                 action_log_probs=policy_output.action_log_probs.cpu().numpy(),
-                values=policy_output.values.squeeze(-1).cpu().numpy(),
-                rewards=rewards.squeeze(-1),
-                dones=dones,
+                values=policy_output.values.cpu().numpy(),
+                rewards=rewards.reshape(self.num_parallel_envs, self.num_agents),
+                dones=(terminations | truncations).reshape(self.num_parallel_envs, self.num_agents),
                 active_masks=None,
             )
-            if render_obs is not None:
-                render_obs = self._render_step(render_obs)
+            if self.render_env is not None:
+                self._render_step()
+        return self.policy.get_values(self.next_obs)
 
-        # get value estimate for final state
-        obs_reshaped = torch.tensor(observations.reshape(self.num_parallel_envs, self.num_agents, -1), device=self.device)
-        next_values = self.policy.get_values(obs_reshaped).squeeze(-1)
-        return next_values
+    def _get_reshaped_obs_tensor(self, o: np.ndarray) -> Float[Tensor, "b agents *obs_shape"]:
+        return torch.tensor(o.reshape(self.num_parallel_envs, self.num_agents, -1), device=self.device, dtype=torch.float32)
 
-    def _render_step(self, render_obs: dict) -> dict:
-        render_policy_output = self.policy.get_actions(
-            obs=torch.as_tensor(
-                np.array([render_obs[agent] for agent in self.render_env.agents]).reshape(1, self.num_agents, -1),
-                device=self.device,
-            ).float()
+    def _render_step(self) -> None:
+        obs = np.array([self.render_obs[agent] for agent in self.render_env.agents]).reshape(1, self.num_agents, -1)
+        policy_output = self.policy.get_actions(obs=torch.tensor(obs, device=self.device))
+        self.render_obs, _, terminations, truncations, _ = self.render_env.step(
+            {agent: action for agent, action in zip(self.render_env.agents, policy_output.actions[0].cpu().numpy())}
         )
-        return self.render_env.step(
-            {agent: action for agent, action in zip(self.render_env.agents, render_policy_output.actions[0].cpu().numpy())}
-        )[0]
+        if any(terminations.values()) or any(truncations.values()):  # pettingzoo doesn't automatically reset :/
+            self.render_obs, _ = self.render_env.reset()
