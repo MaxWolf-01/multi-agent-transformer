@@ -1,6 +1,5 @@
 import argparse
 from dataclasses import dataclass
-from typing import Any
 
 from mat.buffer import BufferConfig
 from mat.decoder import (
@@ -37,6 +36,7 @@ class ExperimentArgumentHandler:
     steps: str = "steps"
     log_every: str = "log"
     ppo_epochs: str = "ppo-epochs"
+    buffer_size: str = "buffer-size"
 
     @classmethod
     def add_args(cls, parser: argparse.ArgumentParser) -> None:
@@ -45,12 +45,15 @@ class ExperimentArgumentHandler:
         parser.add_argument(f"--{cls.steps}", type=int, help="Total number of training steps")
         parser.add_argument(f"--{cls.log_every}", type=int, help="Log frequency in iterations")
         parser.add_argument(f"--{cls.ppo_epochs}", type=int, help="Number of epochs over a trajectory")
+        parser.add_argument(f"--{cls.buffer_size}", type=int, help="Size of the replay buffer")
 
     @classmethod
-    def update_config(cls, args: dict[str, Any], config: ExperimentConfig) -> None:
+    def update_config(cls, namespace: argparse.Namespace, config: ExperimentConfig) -> None:
+        args = {k.replace("_", "-"): v for k, v in vars(namespace).items()}  # argparse converts hyphens to underscores
         config.trainer.lr = args[cls.lr] or config.trainer.lr
         config.n_parallel_envs = args[cls.envs] or config.n_parallel_envs
         config.buffer.num_envs = args[cls.envs] or config.n_parallel_envs
         config.total_steps = args[cls.steps] or config.total_steps
         config.log_every = args[cls.log_every] or config.log_every
         config.trainer.num_ppo_epochs = args[cls.ppo_epochs] or config.trainer.num_ppo_epochs
+        config.buffer.size = args[cls.buffer_size] or config.buffer.size

@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from functools import partial
-from typing import Any
 
 import torch
 import torch.nn.functional as F
@@ -61,6 +60,8 @@ class PPOTrainer:
             else partial(F.mse_loss, reduction="none")
         )
         self._clip_range = (1 - self.cfg.clip_param, 1 + self.cfg.clip_param)
+        self._clear_metrics = lambda: Metrics(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        self._metrics = self._clear_metrics()
 
     def _compute_policy_objective(
         self,
@@ -86,9 +87,8 @@ class PPOTrainer:
             loss = torch.max(loss, self.loss_fn(clipped_vals, returns))
         return loss.mean() if active_masks is None else (loss * active_masks).sum() / active_masks.sum()
 
-    def _update_policy(self) -> dict[str, Any]:
+    def _update_policy(self) -> None:
         """Update policy using PPO on the collected rollout in the buffer."""
-        metrics = {k: 0.0 for k in ["mean_loss", "mean_policy_obj", "mean_value_loss", "mean_entropy", "last_gradnorm"]}
         for _ in range(self.cfg.num_ppo_epochs):
             for batch in self.runner.buffer.get_minibatches(num_minibatches=self.cfg.num_minibatches, device=self.cfg.device):
                 policy_out: MATTrainingOutput = self.policy(obs=batch.obs, actions=batch.actions)
@@ -115,14 +115,16 @@ class PPOTrainer:
                 grad_norm = torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.cfg.max_grad_norm)
                 self.optimizer.step()
 
-                metrics["mean_loss"] += loss.item()
-                metrics["mean_policy_obj"] += policy_objective.item()
-                metrics["mean_value_loss"] += value_loss.item()
-                metrics["mean_entropy"] += entropy.item()
-                metrics["last_grad_norm"] = grad_norm.item()
+                self._metrics.loss += loss.item()
+                self._metrics.policy_objective += policy_objective.item()
+                self._metrics.value_loss += value_loss.item()
+                self._metrics.entropy += entropy.item()
+                self._metrics.last_grad_norm = grad_norm.item()
         num_updates = self.cfg.num_ppo_epochs * self.cfg.num_minibatches
-        metrics.update({k: v / num_updates for k, v in metrics.items() if k.startswith("mean")})
-        return metrics
+        self._metrics.loss /= num_updates
+        self._metrics.policy_objective /= num_updates
+        self._metrics.value_loss /= num_updates
+        self._metrics.entropy /= num_updates
 
     def train_iteration(self) -> Metrics:
         """
@@ -131,6 +133,7 @@ class PPOTrainer:
         3. Update policy multiple times with PPO
         4. Return metrics
         """
+        self._metrics = self._clear_metrics()
         last_value = self.runner.collect_rollout()
         self.runner.buffer.compute_returns_and_advantages(
             last_value=last_value.cpu().numpy(),
@@ -138,14 +141,8 @@ class PPOTrainer:
             gae_lambda=self.cfg.gae_lambda,
             normalize_advantage=self.cfg.normalize_advantage,
         )
-        metrics = self._update_policy()
+        self._update_policy()
         self.runner.buffer.after_update()  # reset buffer (keeps last observation for next iteration)
         # TODO lr decay
-        return Metrics(
-            loss=metrics["mean_loss"],
-            policy_objective=metrics["mean_policy_obj"],
-            value_loss=metrics["mean_value_loss"],
-            entropy=metrics["mean_entropy"],
-            last_grad_norm=metrics["last_grad_norm"],
-            mean_reward=float(self.runner.buffer.rewards.mean()),
-        )
+        self._metrics.mean_reward = float(self.runner.buffer.rewards.mean())
+        return self._metrics

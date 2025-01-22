@@ -17,7 +17,7 @@ from mat.paths import Paths
 from mat.ppo_trainer import PPOTrainer, TrainerConfig
 from mat.runners.mpe import MPERunner
 from mat.samplers import DiscreteSampler, DiscreteSamplerConfig
-from mat.scripts.config import ExperimentConfig
+from mat.scripts.config import ExperimentArgumentHandler, ExperimentConfig
 from mat.utils import ModelCheckpointer, WandbArgumentHandler, WandbConfig
 
 
@@ -75,22 +75,25 @@ def get_config() -> MPEConfig:
     parser = argparse.ArgumentParser()
     parser.add_argument("--scenario", choices=list(MPERunner.SUPPORTED_ENVS.keys()), default="simple_spread_v3")
     parser.add_argument("--render", action="store_true", help="Render the environment")
-    parser.add_argument("--envs", type=int, help="Number of parallel environments")
-    parser.add_argument("--save_every", type=int, help="Save model every n steps")
-    parser.add_argument("--save_best", action="store_true", help="Save best model")
+    parser.add_argument("--save-every", type=int, help="Save model every n steps")
+    parser.add_argument("--save-best", action="store_true", help="Save best model")
     parser.add_argument("--bs", type=int, help="Batch size")
+    parser.add_argument("--episode-length", type=int, help="Length of an episode")
+    ExperimentArgumentHandler.add_args(parser)
     WandbArgumentHandler.add_args(parser)
-    args = vars(parser.parse_args())
+    args = parser.parse_args()
 
-    cfg = MPEConfig.default(args["scenario"])
+    cfg = MPEConfig.default(args.scenario)
 
+    ExperimentArgumentHandler.update_config(args, cfg)
     WandbArgumentHandler.update_config(args, cfg)
-    cfg.render = args["render"] or cfg.render
-    cfg.n_parallel_envs = args["envs"] or cfg.n_parallel_envs
+    cfg.render = args.render or cfg.render
+    cfg.n_parallel_envs = args.envs or cfg.n_parallel_envs
     cfg.buffer.num_envs = cfg.n_parallel_envs
-    cfg.save_every = args["save_every"] or cfg.save_every
-    cfg.save_best = args["save_best"] or cfg.save_best
-    cfg.trainer.num_minibatches = args["bs"] or cfg.trainer.num_minibatches
+    cfg.save_every = args.save_every or cfg.save_every
+    cfg.save_best = args.save_best or cfg.save_best
+    cfg.trainer.num_minibatches = args.bs or cfg.trainer.num_minibatches
+    cfg.env_kwargs["max_cycles"] = args.episode_length or cfg.env_kwargs["max_cycles"]
     return cfg
 
 
@@ -158,7 +161,7 @@ class MPEConfig(ExperimentConfig):
                 dtype=torch.float32,
             ),
             buffer=BufferConfig(
-                size=episode_length,
+                size=episode_length,  # episode length per original config, but not required to be the same
                 num_envs=n_parallel_envs,
                 num_agents=num_agents,
                 obs_shape=(obs_dim,),

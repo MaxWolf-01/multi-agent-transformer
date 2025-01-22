@@ -70,7 +70,8 @@ class WandbArgumentHandler:
         parser.add_argument(f"--{cls.entity}", type=str, help="Wandb entity")
 
     @classmethod
-    def update_config(cls, args: dict[str, Any], config: Any) -> None:
+    def update_config(cls, namespace: argparse.Namespace, config: Any) -> None:
+        args = vars(namespace)
         config.wandb.enabled = args[cls.enable]
         config.wandb.project = args[cls.project] or config.wandb.project
         config.wandb.name = get_run_name(args[cls.name] or config.wandb.name)
