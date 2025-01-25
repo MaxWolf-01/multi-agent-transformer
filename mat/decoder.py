@@ -26,15 +26,16 @@ class TransformerDecoder(nn.Module):
     def __init__(self, config: TransformerDecoderConfig) -> None:
         super().__init__()
         self.cfg = config
-
-        self.act_emb = (
-            nn.Sequential(nn.Linear(config.act_dim + 1, config.embed_dim, bias=False), nn.GELU())
-            if config.act_type == "discrete"
-            else nn.Sequential(nn.Linear(config.act_dim, config.embed_dim), nn.GELU())
+        self.act_emb = nn.Sequential(
+            nn.Linear(
+                config.act_dim if config.act_type != "discrete" else config.act_dim + 1,
+                config.embed_dim,
+                config.act_type != "discrete",
+            ),
+            nn.GELU(),
+            nn.LayerNorm(config.embed_dim),
         )
         self.act_emb.apply(partial(init_weights, use_relu_gain=True))
-        self.act_emb_ln = nn.LayerNorm(config.embed_dim)
-
         self.decoder = x_transformers.Decoder(
             dim=config.embed_dim,
             depth=config.depth,
@@ -43,7 +44,7 @@ class TransformerDecoder(nn.Module):
             cross_attend=True,
         )
         self.decoder.apply(partial(init_weights, use_relu_gain=True))
-
+        self.register_buffer("causal_context_mask", torch.tril(torch.ones(config.num_agents, config.num_agents)).bool())
         self.act_head = nn.Sequential(
             nn.Linear(config.embed_dim, config.embed_dim),
             nn.GELU(),
@@ -52,16 +53,20 @@ class TransformerDecoder(nn.Module):
             nn.Linear(config.embed_dim, config.act_dim),
         )
         self.act_head.apply(partial(init_weights, use_relu_gain=True))
-
         self.log_std = nn.Parameter(torch.ones(config.act_dim)) if config.act_type == "continuous" else None
 
     def forward(
-        self, action: Float[Tensor, "b agents act"], encoded_obs: Float[Tensor, "b agents eobs"]
+        self, action: Float[Tensor, "b agents act"], encoded_obs: Float[Tensor, "b agents dim"]
     ) -> Float[Tensor, "b agents act"]:
         x = self.act_emb(action)
-        x = self.act_emb_ln(x)
-        x = self.decoder(x, context=encoded_obs)
-        return self.act_head(x)
+        x = self.decoder(
+            # TODO original has context from x, kv from encoded_obs! (but this doesn't work with x_transformers Decoder)
+            x=x,
+            context=encoded_obs,
+            context_mask=self.causal_context_mask,
+            in_attn_cond=encoded_obs,  # adds encoded_obs residual after cross-attention
+        )
+        return self.act_head(x)  # TODO allow for multi
 
 
 @dataclass
@@ -97,10 +102,9 @@ class DecentralizedMlpDecoder(nn.Module):
             return mlp
 
         self.mlp = get_mlp() if config.shared_actor else nn.ModuleList([get_mlp() for _ in range(config.num_agents)])
-
         self.log_std = nn.Parameter(torch.ones(config.act_dim)) if config.act_type == "continuous" else None
 
-    def forward(self, encoded_obs: Float[Tensor, "b agents eobs"]) -> Float[Tensor, "b agents act"]:
+    def forward(self, encoded_obs: Float[Tensor, "b agents dim"]) -> Float[Tensor, "b agents act"]:
         if self.cfg.shared_actor:
             return self.mlp(encoded_obs)
         return torch.stack([mlp(encoded_obs[:, i]) for i, mlp in enumerate(self.mlp)], dim=1)
