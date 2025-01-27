@@ -4,5 +4,5 @@ jaxtyping
 pygame
 gymnasium
 pettingzoo
-supersuit
+git+https://github.com/neuro-soup/SuperSuit.git
 wandb

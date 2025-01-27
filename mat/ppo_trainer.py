@@ -93,9 +93,11 @@ class PPOTrainer:
             for batch in self.runner.buffer.get_minibatches(num_minibatches=self.cfg.num_minibatches, device=self.cfg.device):
                 policy_out: MATTrainingOutput = self.policy(obs=batch.obs, actions=batch.actions)
                 policy_objective = self._compute_policy_objective(
-                    action_log_probs=policy_out.action_log_probs,
+                    action_log_probs=policy_out.action_log_probs
+                    if len(policy_out.action_log_probs.shape) > 2
+                    else policy_out.action_log_probs.unsqueeze(-1),
                     old_action_log_probs=batch.old_action_log_probs,
-                    advantages=batch.advantages,
+                    advantages=batch.advantages.unsqueeze(-1),
                     active_masks=batch.active_masks,
                 )
                 value_loss = self._compute_value_loss(

@@ -10,6 +10,9 @@ from torch import Tensor, nn
 from mat.utils import init_weights
 
 
+# TODO just write the model with lower level classes, and do it 1:1 like in the paper / code; Then also have one model which usess standard cross attention etc., using xtransformers decoder... to compare
+
+
 @dataclass
 class TransformerDecoderConfig:
     obs_dim: int
@@ -17,7 +20,6 @@ class TransformerDecoderConfig:
     depth: int
     embed_dim: int
     num_heads: int
-    num_agents: int
     act_type: Literal["discrete", "continuous"]
     dec_actor: bool
 
@@ -44,7 +46,6 @@ class TransformerDecoder(nn.Module):
             cross_attend=True,
         )
         self.decoder.apply(partial(init_weights, use_relu_gain=True))
-        self.register_buffer("causal_context_mask", torch.tril(torch.ones(config.num_agents, config.num_agents)).bool())
         self.act_head = nn.Sequential(
             nn.Linear(config.embed_dim, config.embed_dim),
             nn.GELU(),
@@ -63,7 +64,7 @@ class TransformerDecoder(nn.Module):
             # TODO original has context from x, kv from encoded_obs! (but this doesn't work with x_transformers Decoder)
             x=x,
             context=encoded_obs,
-            context_mask=self.causal_context_mask,
+            context_mask=None,  # TODO
             in_attn_cond=encoded_obs,  # adds encoded_obs residual after cross-attention
         )
         return self.act_head(x)  # TODO allow for multi

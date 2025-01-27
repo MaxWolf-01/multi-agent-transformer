@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import math
 import pprint
 from dataclasses import asdict, dataclass
 from typing import Any
 
 import torch
 import wandb
+from gymnasium_robotics.envs.multiagent_mujoco.mujoco_multi import parallel_env
 
 from mat import mat
 from mat.buffer import Buffer, BufferConfig
@@ -15,8 +17,8 @@ from mat.encoder import EncoderConfig
 from mat.mat import MAT
 from mat.paths import Paths
 from mat.ppo_trainer import PPOTrainer, TrainerConfig
-from mat.runners.mpe import MPERunner
-from mat.samplers import DiscreteSampler, DiscreteSamplerConfig
+from mat.runners.mamujoco import MujocoRunner
+from mat.samplers import ContinousSamplerConfig, ContinuousSampler
 from mat.scripts.config import ExperimentArgumentHandler, ExperimentConfig
 from mat.utils import ModelCheckpointer, WandbArgumentHandler, WandbConfig
 
@@ -25,11 +27,12 @@ def main():
     cfg = get_config()
     encoder = mat.Encoder(cfg.encoder)
     decoder = mat.TransformerDecoder(cfg.decoder)
-    sampler = DiscreteSampler(cfg.sampler)
+    sampler = ContinuousSampler(cfg.sampler)
     policy = MAT(encoder, decoder, sampler).to(cfg.device)
     buffer = Buffer(cfg.buffer)
-    runner = MPERunner(
-        env_id=cfg.env_id,
+    print(cfg.env_kwargs)
+    runner = MujocoRunner(
+        # episode_length=cfg.episode_length,
         env_kwargs=cfg.env_kwargs,
         policy=policy,
         buffer=buffer,
@@ -71,19 +74,21 @@ def main():
             )
 
 
-def get_config() -> MPEConfig:
+def get_config() -> MujocoConfig:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--scenario", choices=list(MPERunner.SUPPORTED_ENVS.keys()), default="simple_spread_v3")
+    parser.add_argument("--scenario", type=str, help="HalfCheetah, Ant, etc.")
+    parser.add_argument("--agent-conf", type=str, help="Agent configuration (e.g. '6x1', '2x3')")
+    parser.add_argument("--agent-obsk", type=int, help="Agent observation depth")
     parser.add_argument("--render", action="store_true", help="Render the environment")
     parser.add_argument("--save-every", type=int, help="Save model every n steps")
     parser.add_argument("--save-best", action="store_true", help="Save best model")
     parser.add_argument("--bs", type=int, help="Batch size")
-    parser.add_argument("--episode-length", type=int, help="Length of an episode")
+    # parser.add_argument("--episode-length", type=int, help="Length of an episode")
     ExperimentArgumentHandler.add_args(parser)
     WandbArgumentHandler.add_args(parser)
     args = parser.parse_args()
 
-    cfg = MPEConfig.default(args.scenario)
+    cfg = MujocoConfig.default(args.scenario, args.agent_conf)
 
     ExperimentArgumentHandler.update_config(args, cfg)
     WandbArgumentHandler.update_config(args, cfg)
@@ -93,89 +98,84 @@ def get_config() -> MPEConfig:
     cfg.save_every = args.save_every or cfg.save_every
     cfg.save_best = args.save_best or cfg.save_best
     cfg.trainer.num_minibatches = args.bs or cfg.trainer.num_minibatches
-    cfg.env_kwargs["max_cycles"] = args.episode_length or cfg.env_kwargs["max_cycles"]
+    cfg.env_kwargs["agent_obsk"] = args.agent_obsk or cfg.env_kwargs["agent_obsk"]
     return cfg
 
 
 @dataclass(kw_only=True, slots=True)
-class MPEConfig(ExperimentConfig):
-    env_id: str
+class MujocoConfig(ExperimentConfig):
     env_kwargs: dict[str, Any]
+    # episode_length: int
     render: bool
     save_every: int | None
     save_best: bool
 
     @classmethod
-    def default(cls, scenario: str) -> MPEConfig:
-        """Default config follows simple spread config from: https://github.com/PKU-MARL/Multi-Agent-Transformer/blob/e3cac1e39c2429f3cab93f2cbaca84481ac6539a/mat/scripts/train_mpe.sh"""
-        env_kwargs = dict(
-            simple_spread_v3=dict(
-                N=3,  # sets num landmarks and num agents
-                max_cycles=25,
-                continuous_actions=False,
-                obs_dim=18,
-                act_dim=5,
-            ),
-        )[scenario]
-        num_agents, episode_length, continuous_actions = 0, 0, False
-        if scenario == "simple_spread_v3":
-            num_agents = env_kwargs["N"]
-            episode_length = env_kwargs["max_cycles"]
-            continuous_actions = env_kwargs["continuous_actions"]
-        obs_dim = env_kwargs.pop("obs_dim")
-        act_dim = env_kwargs.pop("act_dim")
+    def default(cls, scenario: str | None, agent_conf: str | None) -> MujocoConfig:
+        """Default config follows original implementation: https://github.com/PKU-MARL/Multi-Agent-Transformer/blob/e3cac1e39c2429f3cab93f2cbaca84481ac6539a/mat/scripts/train_mujoco.sh"""
+        scenario = scenario or "HalfCheetah"
+        agent_conf = agent_conf or "6x1"
+        env = parallel_env(scenario=scenario, agent_conf=agent_conf)
+        obs, _ = env.reset()
+        obs_dim = 7  # len(env.map_local_observations_to_global_state(obs)) # TODO get the actual thing programmatically
+        act_dim = max([space.shape[0] for space in env.action_spaces.values()])
+        num_agents = math.prod(map(int, agent_conf.split("x")))
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        return MPEConfig(
-            total_steps=20_000_000,
-            n_parallel_envs=(n_parallel_envs := 128),
+        return MujocoConfig(
+            total_steps=10_000_000,
+            n_parallel_envs=(n_parallel_envs := 40),
             log_every=10,
             device=device,
-            env_id=scenario,
-            env_kwargs=env_kwargs,
+            # episode_length=1000,
+            env_kwargs=dict(
+                scenario=scenario,
+                agent_conf=agent_conf,
+                agent_obsk=0,
+            ),
             render=False,
             save_every=None,
             save_best=True,
             encoder=EncoderConfig(
-                obs_dim=obs_dim,  # env.observation_space(env.aec_env.agents[0]).shape[0]
+                obs_dim=obs_dim,
                 depth=1,
                 embed_dim=64,
                 num_heads=1,
             ),
             decoder=TransformerDecoderConfig(
                 obs_dim=obs_dim,
-                act_dim=act_dim,  # env.action_space(env.aec_env.agents[0]).n
-                depth=2,
+                act_dim=act_dim,
+                depth=1,
                 embed_dim=64,
                 num_heads=1,
-                act_type="continuous" if continuous_actions else "discrete",
+                act_type="continuous",
                 dec_actor=False,
             ),
-            sampler=DiscreteSamplerConfig(
+            sampler=ContinousSamplerConfig(
                 num_agents=num_agents,
                 act_dim=act_dim,
-                start_token=1,
                 device=device,
                 dtype=torch.float32,
+                std_scale=0.5,
             ),
             buffer=BufferConfig(
-                size=episode_length,  # episode length per original config, but not required to be the same
+                size=1000,  # episode length
                 num_envs=n_parallel_envs,
                 num_agents=num_agents,
                 obs_shape=(obs_dim,),
-                action_dim=act_dim if continuous_actions else 1,  # discrete == index, continuous == value
+                action_dim=act_dim,
             ),
             trainer=TrainerConfig(
                 # optim
-                lr=7e-4,
+                lr=5e-5,
                 eps=1e-5,
                 weight_decay=0.0,
                 max_grad_norm=0.5,
                 # PPO
                 num_ppo_epochs=10,
-                num_minibatches=1,
+                num_minibatches=40,
                 clip_param=0.05,
                 value_loss_coef=1.0,
-                entropy_coef=0.01,
+                entropy_coef=0.001,
                 gamma=0.99,
                 gae_lambda=0.95,
                 use_clipped_value_loss=True,
@@ -185,7 +185,7 @@ class MPEConfig(ExperimentConfig):
                 device=device,
             ),
             wandb=WandbConfig(
-                project=f"MPE_{scenario}",
+                project=f"MaMuJoCo_{scenario}",
             ),
         )
 

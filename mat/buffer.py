@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Iterator, NamedTuple
 
+import einops
 import numpy as np
 import torch
 from jaxtyping import Float
@@ -98,14 +99,15 @@ class Buffer:
             end_idx = start_idx + mini_batch_size
             mb_inds = indices[start_idx:end_idx]
 
-            def _get_minibatch(x: np.ndarray) -> torch.Tensor:  # (size, num_envs, num_agents, *) -> (bs, num_agents, *)
-                return torch.as_tensor(x.reshape(-1, *x.shape[2:])[mb_inds], device=device)
+            def _get_minibatch(x: np.ndarray, unsq: bool = False) -> torch.Tensor:
+                t = torch.as_tensor(einops.rearrange(x, "sz envs agents ... -> (sz envs) agents ...")[mb_inds], device=device)
+                return t.unsqueeze(-1) if unsq and len(t.shape) == 2 else t
 
             yield Trajectory(
                 obs=_get_minibatch(self.obs[:-1]),
                 actions=_get_minibatch(self.actions),
                 old_values=_get_minibatch(self.values),
-                old_action_log_probs=_get_minibatch(self.action_log_probs),
+                old_action_log_probs=_get_minibatch(self.action_log_probs, unsq=True),
                 advantages=_get_minibatch(self.advantages),
                 returns=_get_minibatch(self.returns),
                 active_masks=_get_minibatch(self.active_masks[:-1]) if self.active_masks is not None else None,
