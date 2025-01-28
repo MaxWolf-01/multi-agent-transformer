@@ -143,10 +143,12 @@ class MPEConfig(ExperimentConfig):
             runner=MPERunnerConfig(
                 env_id=scenario,
                 env_kwargs=env_kwargs,
-                render=False,
+                num_agents=num_agents,
                 num_envs=n_parallel_envs,
                 use_agent_id_enc=True,
+                permute_agents=True,
                 device=device,
+                render=False,
             ),
             trainer=TrainerConfig(
                 # optim

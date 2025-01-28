@@ -1,10 +1,8 @@
 from dataclasses import dataclass
 
-import einops
 import numpy as np
 import supersuit as ss
 import torch
-import torch.nn.functional as F
 from jaxtyping import Float
 from pettingzoo.mpe import simple_spread_v3
 from torch import Tensor
@@ -17,9 +15,6 @@ from mat.runners.base import EnvRunner, RunnerConfig
 @dataclass
 class MPERunnerConfig(RunnerConfig):
     env_id: str
-    env_kwargs: dict
-    num_envs: int
-    use_agent_id_enc: bool
 
 
 class MPERunner(EnvRunner):
@@ -54,9 +49,10 @@ class MPERunner(EnvRunner):
     @torch.inference_mode()
     def collect_rollout(self) -> Float[Tensor, "b agents"]:
         """Collects a rollout using the current policy and returns the value estimate for final state."""
+        self._permute_agents()
         for step in range(self.buffer.cfg.length):
             policy_output = self.policy.get_actions(obs=(obs := self.next_obs))
-            actions = policy_output.actions.cpu().numpy()  # (batch, agents)
+            actions = policy_output.actions.cpu().numpy()[:, self.inverse_agent_perm]  # (batch, agents)
             self.next_obs, rewards, terminations, truncations, infos = self.env.step(actions.reshape(-1))
             self.next_obs = self._get_obs(self.next_obs)
             self.buffer.insert(
@@ -71,14 +67,6 @@ class MPERunner(EnvRunner):
             if self.render_env is not None:
                 self._render_step()
         return self.policy.get_values(self.next_obs)
-
-    def _get_obs(self, o: np.ndarray) -> Float[Tensor, "b agents obs"]:
-        o = torch.tensor(o.reshape(self.cfg.num_envs, self.num_agents, -1), device=self.cfg.device, dtype=torch.float32)
-        if not self.cfg.use_agent_id_enc:
-            return o
-        agent_ids = F.one_hot(torch.arange(self.num_agents, device=self.cfg.device), num_classes=self.num_agents).float()
-        agent_ids = einops.repeat(agent_ids, "agents agents_id -> b agents agents_id", b=self.cfg.num_envs)
-        return torch.cat([o, agent_ids], dim=-1)
 
     def _render_step(self) -> None:
         obs = np.array([self.render_obs[agent] for agent in self.render_env.agents]).reshape(1, self.num_agents, -1)
