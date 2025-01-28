@@ -22,7 +22,7 @@ class Trajectory(NamedTuple):
 
 @dataclass
 class BufferConfig:
-    size: int
+    length: int
     num_envs: int
     num_agents: int
     obs_shape: tuple[int, ...]
@@ -39,22 +39,26 @@ class Buffer:
 
     def __init__(self, config: BufferConfig):
         self.cfg = config
-        cfg, size, num_envs, num_agents = config, config.size, config.num_envs, config.num_agents
-        self.values = np.zeros((size, num_envs, num_agents), dtype=np.float32)
-        self.actions = np.zeros((size, num_envs, num_agents, cfg.action_dim), dtype=np.float32)
-        self.action_log_probs = np.zeros((size, num_envs, num_agents), dtype=np.float32)
-        self.rewards = np.zeros((size, num_envs, num_agents), dtype=np.float32)
+        cfg, length, num_envs, num_agents = config, config.length, config.num_envs, config.num_agents
+        self.values = np.zeros((length, num_envs, num_agents), dtype=np.float32)
+        self.actions = np.zeros((length, num_envs, num_agents, cfg.action_dim), dtype=np.float32)
+        self.action_log_probs = np.zeros((length, num_envs, num_agents), dtype=np.float32)
+        self.rewards = np.zeros((length, num_envs, num_agents), dtype=np.float32)
         # +1 to observations/dones/masks for last observation -> start of next trajectory; last val is passed separately
-        self.obs = np.zeros((size + 1, num_envs, num_agents, *cfg.obs_shape), dtype=np.float32)
-        self.dones = np.zeros((size + 1, num_envs, num_agents), dtype=np.float32)
+        self.obs = np.zeros((length + 1, num_envs, num_agents, *cfg.obs_shape), dtype=np.float32)
+        self.dones = np.zeros((length + 1, num_envs, num_agents), dtype=np.float32)
         # optional mask for inactive agents (e.g., dead agents in some environments)
-        self.active_masks = np.ones((size + 1, num_envs, num_agents), dtype=np.float32) if cfg.active_masks else None
+        self.active_masks = np.ones((length + 1, num_envs, num_agents), dtype=np.float32) if cfg.active_masks else None
         # computed after collecting complete trajectory
         self.returns = None
         self.advantages = None
 
         self.full = False
         self.step = 0
+
+    @property
+    def batch_size(self) -> int:  # number of transitions
+        return self.cfg.num_envs * self.cfg.length
 
     def insert(
         self,
@@ -81,22 +85,18 @@ class Buffer:
         if active_masks is not None:
             self.active_masks[self.step + 1] = active_masks
 
-        self.step = (self.step + 1) % self.cfg.size
+        self.step = (self.step + 1) % self.cfg.length
         if self.step == 0:
             self.full = True
 
-    def get_minibatches(self, num_minibatches: int, device: torch.device) -> Iterator[Trajectory]:
+    def get_minibatches(self, mb_size: int, device: torch.device) -> Iterator[Trajectory]:
         """
         Flattens the env and time dimensions to create a batch of transitions (batch_size, *dims) , then splits this batch into minibatches.
         We remove the final observation/value since they were only needed for bootstrapping returns computation.
         """
-        num_envs, size = self.cfg.num_envs, self.cfg.size
-        batch_size = num_envs * size
-        mini_batch_size = batch_size // num_minibatches
-
-        indices = np.random.permutation(batch_size)
-        for start_idx in range(0, batch_size, mini_batch_size):
-            end_idx = start_idx + mini_batch_size
+        indices = np.random.permutation(self.batch_size)
+        for start_idx in range(0, self.batch_size, mb_size):
+            end_idx = start_idx + mb_size
             mb_inds = indices[start_idx:end_idx]
 
             def _get_minibatch(x: np.ndarray, unsq: bool = False) -> torch.Tensor:

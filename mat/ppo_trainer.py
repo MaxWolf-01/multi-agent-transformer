@@ -19,7 +19,7 @@ class TrainerConfig:
 
     # PPO
     num_ppo_epochs: int
-    num_minibatches: int
+    minibatch_size: int
     clip_param: float
     value_loss_coef: float
     entropy_coef: float
@@ -90,7 +90,7 @@ class PPOTrainer:
     def _update_policy(self) -> None:
         """Update policy using PPO on the collected rollout in the buffer."""
         for _ in range(self.cfg.num_ppo_epochs):
-            for batch in self.runner.buffer.get_minibatches(num_minibatches=self.cfg.num_minibatches, device=self.cfg.device):
+            for batch in self.runner.buffer.get_minibatches(mb_size=self.cfg.minibatch_size, device=self.cfg.device):
                 policy_out: MATTrainingOutput = self.policy(obs=batch.obs, actions=batch.actions)
                 policy_objective = self._compute_policy_objective(
                     action_log_probs=policy_out.action_log_probs
@@ -122,7 +122,7 @@ class PPOTrainer:
                 self._metrics.value_loss += value_loss.item()
                 self._metrics.entropy += entropy.item()
                 self._metrics.last_grad_norm = grad_norm.item()
-        num_updates = self.cfg.num_ppo_epochs * self.cfg.num_minibatches
+        num_updates = self.cfg.num_ppo_epochs * (self.runner.buffer.batch_size // self.cfg.minibatch_size)
         self._metrics.loss /= num_updates
         self._metrics.policy_objective /= num_updates
         self._metrics.value_loss /= num_updates

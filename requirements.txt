@@ -6,3 +6,4 @@ gymnasium
 pettingzoo
 git+https://github.com/neuro-soup/SuperSuit.git
 wandb
+einops

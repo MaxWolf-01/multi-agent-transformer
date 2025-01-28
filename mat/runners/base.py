@@ -1,18 +1,29 @@
 import abc
+from dataclasses import dataclass
+from typing import Any
 
 import torch
 from jaxtyping import Float
-from torch import Tensor
+from torch import Tensor, nn
 
 from mat.buffer import Buffer
+
+
+@dataclass
+class RunnerConfig:
+    env_kwargs: dict[str, Any]
+    use_agent_id_enc: bool
+    device: str | torch.device
+    render: bool
 
 
 class EnvRunner(abc.ABC):
     """Handles environment interaction and data collection."""
 
-    def __init__(self, device: str | torch.device, buffer: Buffer):
-        self.device = device
+    def __init__(self, config: RunnerConfig, buffer: Buffer, policy: nn.Module):
+        self.cfg = config
         self.buffer = buffer
+        self.policy = policy
 
     @abc.abstractmethod
     def collect_rollout(self) -> Float[Tensor, "b agents"]:
@@ -24,7 +35,7 @@ class EnvRunner(abc.ABC):
                 policy_output = self.policy.get_actions(obs=self.obs)
             next_obs, rewards, terminations, truncations, info = self.env.step(policy_output.actions)
             self.buffer.insert(...)
-            self.obs = next_obs
+            self.obs = next_obs + agent_id  # add one-hot agent id to obs
         with torch.no_grad():
             next_values = self.policy.get_values(torch.tensor(next_obs))
         return next_values
