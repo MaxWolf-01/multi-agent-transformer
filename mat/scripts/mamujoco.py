@@ -4,11 +4,9 @@ import argparse
 import math
 import pprint
 from dataclasses import asdict, dataclass
-from typing import Any
 
 import torch
 import wandb
-from gymnasium_robotics.envs.multiagent_mujoco.mujoco_multi import parallel_env
 
 from mat import mat
 from mat.buffer import Buffer, BufferConfig
@@ -17,7 +15,7 @@ from mat.encoder import EncoderConfig
 from mat.mat import MAT
 from mat.paths import Paths
 from mat.ppo_trainer import PPOTrainer, TrainerConfig
-from mat.runners.mamujoco import MujocoRunner
+from mat.runners.mamujoco import MujocoRunner, MujocoRunnerConfig
 from mat.samplers import ContinousSamplerConfig, ContinuousSampler
 from mat.scripts.config import ExperimentArgumentHandler, ExperimentConfig
 from mat.utils import ModelCheckpointer, WandbArgumentHandler, WandbConfig
@@ -30,16 +28,7 @@ def main():
     sampler = ContinuousSampler(cfg.sampler)
     policy = MAT(encoder, decoder, sampler).to(cfg.device)
     buffer = Buffer(cfg.buffer)
-    print(cfg.env_kwargs)
-    runner = MujocoRunner(
-        # episode_length=cfg.episode_length,
-        env_kwargs=cfg.env_kwargs,
-        policy=policy,
-        buffer=buffer,
-        num_envs=cfg.n_parallel_envs,
-        device=cfg.device,
-        render=cfg.render,
-    )
+    runner = MujocoRunner(cfg.runner, policy=policy, buffer=buffer)
     trainer = PPOTrainer(config=cfg.trainer, policy=policy, runner=runner)
     if cfg.wandb.enabled:
         wandb.init(
@@ -52,7 +41,7 @@ def main():
     checkpointer = ModelCheckpointer(save_dir=Paths.CKPTS, prefix=cfg.wandb.name)
     pprint.pprint(cfg)
 
-    steps_per_it = cfg.buffer.size * cfg.n_parallel_envs
+    steps_per_it = cfg.buffer.length * cfg.n_parallel_envs
     num_iterations = cfg.total_steps // steps_per_it
     total_steps = 0
     for i in range(num_iterations):
@@ -79,10 +68,6 @@ def get_config() -> MujocoConfig:
     parser.add_argument("--scenario", type=str, help="HalfCheetah, Ant, etc.")
     parser.add_argument("--agent-conf", type=str, help="Agent configuration (e.g. '6x1', '2x3')")
     parser.add_argument("--agent-obsk", type=int, help="Agent observation depth")
-    parser.add_argument("--render", action="store_true", help="Render the environment")
-    parser.add_argument("--save-every", type=int, help="Save model every n steps")
-    parser.add_argument("--save-best", action="store_true", help="Save best model")
-    parser.add_argument("--bs", type=int, help="Batch size")
     # parser.add_argument("--episode-length", type=int, help="Length of an episode")
     ExperimentArgumentHandler.add_args(parser)
     WandbArgumentHandler.add_args(parser)
@@ -92,49 +77,46 @@ def get_config() -> MujocoConfig:
 
     ExperimentArgumentHandler.update_config(args, cfg)
     WandbArgumentHandler.update_config(args, cfg)
-    cfg.render = args.render or cfg.render
-    cfg.n_parallel_envs = args.envs or cfg.n_parallel_envs
-    cfg.buffer.num_envs = cfg.n_parallel_envs
-    cfg.save_every = args.save_every or cfg.save_every
-    cfg.save_best = args.save_best or cfg.save_best
-    cfg.trainer.num_minibatches = args.bs or cfg.trainer.num_minibatches
-    cfg.env_kwargs["agent_obsk"] = args.agent_obsk or cfg.env_kwargs["agent_obsk"]
+    cfg.runner.env_kwargs["agent_obsk"] = args.agent_obsk or cfg.runner.env_kwargs["agent_obsk"]
     return cfg
 
 
 @dataclass(kw_only=True, slots=True)
 class MujocoConfig(ExperimentConfig):
-    env_kwargs: dict[str, Any]
-    # episode_length: int
-    render: bool
-    save_every: int | None
-    save_best: bool
+    runner: MujocoRunnerConfig
 
     @classmethod
     def default(cls, scenario: str | None, agent_conf: str | None) -> MujocoConfig:
         """Default config follows original implementation: https://github.com/PKU-MARL/Multi-Agent-Transformer/blob/e3cac1e39c2429f3cab93f2cbaca84481ac6539a/mat/scripts/train_mujoco.sh"""
+        # TODO OG impl uses episode_length 100!
+        if scenario or agent_conf:
+            raise NotImplementedError
         scenario = scenario or "HalfCheetah"
         agent_conf = agent_conf or "6x1"
-        env = parallel_env(scenario=scenario, agent_conf=agent_conf)
-        obs, _ = env.reset()
-        obs_dim = 7  # len(env.map_local_observations_to_global_state(obs)) # TODO get the actual thing programmatically
-        act_dim = max([space.shape[0] for space in env.action_spaces.values()])
         num_agents = math.prod(map(int, agent_conf.split("x")))
+        obs_dim = 7 + num_agents
+        act_dim = 1  # max([space.shape[0] for space in env.action_spaces.values()])
         device = "cuda" if torch.cuda.is_available() else "cpu"
         return MujocoConfig(
             total_steps=10_000_000,
             n_parallel_envs=(n_parallel_envs := 40),
             log_every=10,
-            device=device,
-            # episode_length=1000,
-            env_kwargs=dict(
-                scenario=scenario,
-                agent_conf=agent_conf,
-                agent_obsk=0,
-            ),
-            render=False,
             save_every=None,
             save_best=True,
+            device=device,
+            runner=MujocoRunnerConfig(
+                env_kwargs=dict(
+                    scenario=scenario,
+                    agent_conf=agent_conf,
+                    agent_obsk=0,
+                ),
+                num_agents=num_agents,
+                num_envs=n_parallel_envs,
+                use_agent_id_enc=True,
+                permute_agents=True,
+                device=device,
+                render=False,
+            ),
             encoder=EncoderConfig(
                 obs_dim=obs_dim,
                 depth=1,
@@ -158,7 +140,7 @@ class MujocoConfig(ExperimentConfig):
                 std_scale=0.5,
             ),
             buffer=BufferConfig(
-                size=1000,  # episode length
+                length=1000,  # episode length
                 num_envs=n_parallel_envs,
                 num_agents=num_agents,
                 obs_shape=(obs_dim,),
@@ -172,7 +154,8 @@ class MujocoConfig(ExperimentConfig):
                 max_grad_norm=0.5,
                 # PPO
                 num_ppo_epochs=10,
-                num_minibatches=40,
+                # num_minibatches=40,
+                minibatch_size=1000,  # OG: num_minibatch=40 => (40*1000)/40 = 1000
                 clip_param=0.05,
                 value_loss_coef=1.0,
                 entropy_coef=0.001,

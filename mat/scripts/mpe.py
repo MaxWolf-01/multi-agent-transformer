@@ -81,8 +81,6 @@ def get_config() -> MPEConfig:
 @dataclass(kw_only=True, slots=True)
 class MPEConfig(ExperimentConfig):
     runner: MPERunnerConfig
-    save_every: int | None
-    save_best: bool
 
     @classmethod
     def default(cls, scenario: str) -> MPEConfig:
@@ -108,9 +106,9 @@ class MPEConfig(ExperimentConfig):
             total_steps=20_000_000,
             n_parallel_envs=(n_parallel_envs := 128),
             log_every=10,
-            device=device,
             save_every=None,
             save_best=True,
+            device=device,
             encoder=EncoderConfig(
                 obs_dim=obs_dim,
                 depth=1,

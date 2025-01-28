@@ -25,9 +25,11 @@ class ExperimentConfig:
     runner: RunnerConfig
     trainer: TrainerConfig
     wandb: WandbConfig
-    n_parallel_envs: int
     total_steps: int
+    n_parallel_envs: int
     log_every: int
+    save_every: int | None
+    save_best: bool
     device: str
 
 
@@ -68,3 +70,6 @@ class ExperimentArgumentHandler:
         config.log_every = args[cls.log_every] or config.log_every
         config.trainer.num_ppo_epochs = args[cls.ppo_epochs] or config.trainer.num_ppo_epochs
         config.buffer.length = args[cls.buffer_len] or config.buffer.length
+        config.runner.render = args[cls.render] or config.runner.render
+        config.save_every = args[cls.save_every] or config.save_every
+        config.save_best = args[cls.save_best] or config.save_best
