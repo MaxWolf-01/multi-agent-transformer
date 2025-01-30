@@ -8,21 +8,17 @@ from jaxtyping import Float
 from torch import Tensor
 from torch.distributions import Categorical, Normal
 
-from mat.decoder import DecentralizedMlpDecoder, TransformerDecoder
+from mat.decoder import DecentralizedMlpDecoder, MATDecoder, TransformerDecoder
 
 
 @dataclass
 class SamplerConfig:
-    num_agents: int
     act_dim: int
-    device: str | torch.device
-    dtype: torch.dtype
 
 
 class Sampler(abc.ABC):
     def __init__(self, config: SamplerConfig):
         self.cfg = config
-        self.tprops = dict(device=config.device, dtype=config.dtype)
 
 
 class ParallelDiscreteSample(NamedTuple):
@@ -48,50 +44,50 @@ class DiscreteSampler(Sampler):
 
     def autoregressive(
         self,
-        decoder: "TransformerDecoder | DecentralizedMlpDecoder",
+        decoder: TransformerDecoder | MATDecoder | DecentralizedMlpDecoder,
         encoded_obs: Float[Tensor, "b agents emb"] | None = None,
         raw_obs: Float[Tensor, "b agents obs"] | None = None,
         available_actions: Tensor | None = None,
         deterministic: bool = False,
     ) -> AutoregressiveDiscreteSample:
-        batch_size = get_batch_size(encoded_obs, raw_obs)
+        batch_size, num_agents, device = get_obs_info(encoded_obs, raw_obs)
         actions = []
         log_probs = []
-        if isinstance(decoder, TransformerDecoder):
-            action_history = torch.zeros((batch_size, self.cfg.num_agents, self.cfg.act_dim + 1)).to(**self.tprops)
+        if isinstance(decoder, DecentralizedMlpDecoder):
+            out = decoder(raw_obs)  # independent sampling for each agent
+            for i in range(num_agents):
+                logits = out[:, i, :]
+                action, log_prob = self._sample_discrete_action(logits, available_actions, i, deterministic)
+                actions.append(action)
+                log_probs.append(log_prob)
+        else:
+            action_history = torch.zeros((batch_size, num_agents, self.cfg.act_dim + 1), device=device)
             action_history[:, 0, 0] = self.cfg.start_token
-            for i in range(self.cfg.num_agents):
+            for i in range(num_agents):
                 logits = decoder(action_history, encoded_obs)[:, i, :]  # (b, action_dim)
                 action, log_prob = self._sample_discrete_action(logits, available_actions, i, deterministic)
                 actions.append(action)
                 log_probs.append(log_prob)
 
-                if i + 1 < self.cfg.num_agents:
+                if i + 1 < num_agents:
                     action_history[:, i + 1, 1:] = F.one_hot(action, num_classes=self.cfg.act_dim)
-        else:
-            out = decoder(raw_obs)  # independent sampling for each agent
-            for i in range(self.cfg.num_agents):
-                logits = out[:, i, :]
-                action, log_prob = self._sample_discrete_action(logits, available_actions, i, deterministic)
-                actions.append(action)
-                log_probs.append(log_prob)
         return AutoregressiveDiscreteSample(actions=torch.stack(actions, dim=1), log_probs=torch.stack(log_probs, dim=1))
 
     def parallel(
         self,
         actions: Float[Tensor, "b agents act"],
-        decoder: "TransformerDecoder | DecentralizedMlpDecoder",
+        decoder: TransformerDecoder | MATDecoder | DecentralizedMlpDecoder,
         encoded_obs: Float[Tensor, "b agents emb"] | None = None,
         raw_obs: Float[Tensor, "b agents obs"] | None = None,
         available_actions: Tensor | None = None,
     ) -> ParallelDiscreteSample:
-        batch_size = get_batch_size(encoded_obs, raw_obs)
+        batch_size, num_agents, device = get_obs_info(encoded_obs, raw_obs)
 
         if isinstance(decoder, DecentralizedMlpDecoder):
             logits = decoder(raw_obs)
         else:
             one_hot_action = F.one_hot(actions.long().squeeze(), num_classes=self.cfg.act_dim)  # (b, num_agents, action_dim)
-            shifted_action = torch.zeros((batch_size, self.cfg.num_agents, self.cfg.act_dim + 1)).to(**self.tprops)
+            shifted_action = torch.zeros((batch_size, num_agents, self.cfg.act_dim + 1), device=device)
             shifted_action[:, 0, 0] = self.cfg.start_token
             shifted_action[:, 1:, 1:] = one_hot_action[:, :-1, :]  # => [1, 0, ... 0], [0, agent_i_onehot]
             logits = decoder(shifted_action, encoded_obs)
@@ -140,24 +136,24 @@ class ContinuousSampler(Sampler):
 
     def autoregressive(
         self,
-        decoder: TransformerDecoder | DecentralizedMlpDecoder,
+        decoder: TransformerDecoder | MATDecoder | DecentralizedMlpDecoder,
         encoded_obs: Float[Tensor, "b agents emb"] | None = None,
         raw_obs: Float[Tensor, "b agents obs"] | None = None,
         deterministic: bool = False,
     ) -> ContinuousAutoregressiveSample:
-        batch_size = get_batch_size(encoded_obs, raw_obs)
+        batch_size, num_agents, device = get_obs_info(encoded_obs, raw_obs)
         actions = []
         log_probs = []
-        action_history = torch.zeros((batch_size, self.cfg.num_agents, self.cfg.act_dim)).to(**self.tprops)
-        for i in range(self.cfg.num_agents):
-            act_mean = decoder(action_history, encoded_obs) if isinstance(decoder, TransformerDecoder) else decoder(raw_obs)
+        action_history = torch.zeros((batch_size, num_agents, self.cfg.act_dim), device=device)
+        for i in range(num_agents):
+            act_mean = decoder(raw_obs) if isinstance(decoder, DecentralizedMlpDecoder) else decoder(action_history, encoded_obs)
             act_mean = act_mean[:, i, :]
 
             action, dist = self._sample_continuous_action(act_mean, decoder.log_std, deterministic)
             actions.append(action)
             log_probs.append(dist.log_prob(action))
 
-            if i + 1 < self.cfg.num_agents and isinstance(decoder, TransformerDecoder):
+            if i + 1 < num_agents and not isinstance(decoder, DecentralizedMlpDecoder):
                 action_history[:, i + 1, :] = action
 
         return ContinuousAutoregressiveSample(actions=torch.stack(actions, dim=1), log_probs=torch.stack(log_probs, dim=1))
@@ -165,17 +161,17 @@ class ContinuousSampler(Sampler):
     def parallel(
         self,
         actions: Float[Tensor, "b agents act"],
-        decoder: "TransformerDecoder | DecentralizedMlpDecoder",
+        decoder: TransformerDecoder | MATDecoder | DecentralizedMlpDecoder,
         encoded_obs: Float[Tensor, "b agents emb"] | None = None,
         raw_obs: Float[Tensor, "b agents obs"] | None = None,
         deterministic: bool = False,
     ) -> ContinuousParallelSample:
-        batch_size = get_batch_size(encoded_obs, raw_obs)
+        batch_size, num_agents, device = get_obs_info(encoded_obs, raw_obs)
 
         if isinstance(decoder, DecentralizedMlpDecoder):
             act_mean = decoder(raw_obs)
         else:
-            shifted_action = torch.zeros((batch_size, self.cfg.num_agents, self.cfg.act_dim)).to(**self.tprops)
+            shifted_action = torch.zeros((batch_size, num_agents, self.cfg.act_dim), device=device)
             shifted_action[:, 1:, :] = actions[:, :-1, :]
             act_mean = decoder(shifted_action, encoded_obs)
 
@@ -191,9 +187,9 @@ class ContinuousSampler(Sampler):
         return action, dist
 
 
-def get_batch_size(encoded_obs: torch.Tensor | None, raw_obs: torch.Tensor | None) -> int:
+def get_obs_info(encoded_obs: torch.Tensor | None, raw_obs: torch.Tensor | None) -> tuple[int, int, torch.device]:
     if encoded_obs is not None:
-        return encoded_obs.size(0)
+        return encoded_obs.size(0), encoded_obs.size(1), encoded_obs.device
     if raw_obs is not None:
-        return raw_obs.size(0)
+        return raw_obs.size(0), raw_obs.size(1), raw_obs.device
     raise ValueError("Exactly one of encoded_obs or raw_obs must be provided.")

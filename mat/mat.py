@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from jaxtyping import Float
 from torch import Tensor, nn
 
-from mat.decoder import DecentralizedMlpDecoder, TransformerDecoder
+from mat.decoder import DecentralizedMlpDecoder, MATDecoder, TransformerDecoder
 from mat.encoder import Encoder
 from mat.samplers import ContinuousSampler, DiscreteSampler
 
@@ -24,14 +24,14 @@ class MAT(nn.Module):
     def __init__(
         self,
         encoder: Encoder,
-        decoder: TransformerDecoder | DecentralizedMlpDecoder,
+        decoder: TransformerDecoder | MATDecoder | DecentralizedMlpDecoder,
         sampler: DiscreteSampler | ContinuousSampler,
     ) -> None:
         super().__init__()
         self.encoder = encoder
         self.decoder = decoder
         self.sampler = sampler
-        self.use_encoded_obs = isinstance(decoder, TransformerDecoder)
+        self.use_encoded_obs = isinstance(decoder, TransformerDecoder | MATDecoder)
         self.use_raw_obs = isinstance(decoder, DecentralizedMlpDecoder)
         self.is_discrete = isinstance(sampler, DiscreteSampler)
 

@@ -8,10 +8,9 @@ from dataclasses import asdict, dataclass
 import torch
 import wandb
 
-from mat import mat
 from mat.buffer import Buffer, BufferConfig
-from mat.decoder import TransformerDecoderConfig
-from mat.encoder import EncoderConfig
+from mat.decoder import MATDecoder, TransformerDecoderConfig
+from mat.encoder import Encoder, EncoderConfig
 from mat.mat import MAT
 from mat.paths import Paths
 from mat.ppo_trainer import PPOTrainer, TrainerConfig
@@ -23,8 +22,8 @@ from mat.utils import ModelCheckpointer, WandbArgumentHandler, WandbConfig
 
 def main():
     cfg = get_config()
-    encoder = mat.Encoder(cfg.encoder)
-    decoder = mat.TransformerDecoder(cfg.decoder)
+    encoder = Encoder(cfg.encoder)
+    decoder = MATDecoder(cfg.decoder)
     sampler = ContinuousSampler(cfg.sampler)
     policy = MAT(encoder, decoder, sampler).to(cfg.device)
     buffer = Buffer(cfg.buffer)
@@ -133,10 +132,7 @@ class MujocoConfig(ExperimentConfig):
                 dec_actor=False,
             ),
             sampler=ContinousSamplerConfig(
-                num_agents=num_agents,
                 act_dim=act_dim,
-                device=device,
-                dtype=torch.float32,
                 std_scale=0.5,
             ),
             buffer=BufferConfig(
