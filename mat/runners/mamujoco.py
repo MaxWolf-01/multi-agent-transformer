@@ -13,9 +13,7 @@ from mat.runners.base import EnvRunner, RunnerConfig
 
 
 @dataclass
-class MujocoRunnerConfig(RunnerConfig):
-    # episode_length: int, # it's 1k per default, haven't figured out how to pass it to parallel_env yet...
-    ...
+class MujocoRunnerConfig(RunnerConfig): ...
 
 
 class MujocoRunner(EnvRunner):
@@ -27,13 +25,6 @@ class MujocoRunner(EnvRunner):
         self.obs_dim = len(base_env.map_local_observations_to_global_state(obs))
         self.act_dim = max([space.shape[0] for space in base_env.action_spaces.values()])
         self.num_agents = base_env.num_agents
-
-        print("action spaces", base_env.action_spaces)
-        print("agents", base_env.agents)
-        print("observation spaces", base_env.observation_spaces)
-        print("global observation space", self.obs_dim)
-        print("largest action space", self.act_dim)
-        print("num agents", self.num_agents)
 
         self.env = ss.pettingzoo_env_to_vec_env_v1(base_env, array_act=True)
         self.env = ss.concat_vec_envs_v1(self.env, num_vec_envs=config.num_envs)
