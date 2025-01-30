@@ -69,9 +69,9 @@ class MPERunner(EnvRunner):
         return self.policy.get_values(self.next_obs)
 
     def _render_step(self) -> None:
-        obs = np.array([self.render_obs[agent] for agent in self.render_env.agents]).reshape(1, self.num_agents, -1)
-        policy_output = self.policy.get_actions(obs=torch.tensor(obs, device=self.cfg.device, dtype=torch.float32))
-        actions = {agent: action for agent, action in zip(self.render_env.agents, policy_output.actions[0].cpu().numpy())}
+        obs = self._get_obs(np.array([self.render_obs[agent] for agent in self.render_env.agents]), num_envs=1)
+        actions = self.policy.get_actions(obs=obs).actions[:, self.inverse_agent_perm]
+        actions = {agent: int(action) for agent, action in zip(self.render_env.agents, actions.squeeze().cpu().numpy())}
         self.render_obs, _, terminations, truncations, _ = self.render_env.step(actions)
         if any(terminations.values()) or any(truncations.values()):  # pettingzoo doesn't automatically reset :/
             self.render_obs, _ = self.render_env.reset()

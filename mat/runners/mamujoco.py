@@ -67,8 +67,8 @@ class MujocoRunner(EnvRunner):
         return self.policy.get_values(self.next_obs)
 
     def _render_step(self) -> None:
-        obs = np.array([self.render_obs[agent] for agent in self.render_env.agents]).reshape(1, self.num_agents, -1)
-        policy_output = self.policy.get_actions(obs=torch.tensor(obs, device=self.cfg.device, dtype=torch.float32))
+        obs = self._get_obs(np.array([self.render_obs[agent] for agent in self.render_env.agents]), num_envs=1)
+        policy_output = self.policy.get_actions(obs=obs)
         actions = {agent: action for agent, action in zip(self.render_env.agents, policy_output.actions[0].cpu().numpy())}
         self.render_obs, _, terminations, truncations, _ = self.render_env.step(actions)
         if any(terminations.values()) or any(truncations.values()):
