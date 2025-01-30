@@ -87,7 +87,6 @@ class MujocoConfig(ExperimentConfig):
     @classmethod
     def default(cls, scenario: str | None, agent_conf: str | None) -> MujocoConfig:
         """Default config follows original implementation: https://github.com/PKU-MARL/Multi-Agent-Transformer/blob/e3cac1e39c2429f3cab93f2cbaca84481ac6539a/mat/scripts/train_mujoco.sh"""
-        # TODO OG impl uses episode_length 100!
         if scenario or agent_conf:
             raise NotImplementedError
         scenario = scenario or "HalfCheetah"
@@ -105,9 +104,7 @@ class MujocoConfig(ExperimentConfig):
             device=device,
             runner=MujocoRunnerConfig(
                 env_kwargs=dict(
-                    scenario=scenario,
-                    agent_conf=agent_conf,
-                    agent_obsk=0,
+                    scenario=scenario, agent_conf=agent_conf, agent_obsk=0, max_episode_steps=(episode_length := 100)
                 ),
                 num_agents=num_agents,
                 num_envs=n_parallel_envs,
@@ -136,7 +133,7 @@ class MujocoConfig(ExperimentConfig):
                 std_scale=0.5,
             ),
             buffer=BufferConfig(
-                length=1000,  # episode length
+                length=episode_length,  # episode length
                 num_envs=n_parallel_envs,
                 num_agents=num_agents,
                 obs_shape=(obs_dim,),
@@ -151,7 +148,7 @@ class MujocoConfig(ExperimentConfig):
                 # PPO
                 num_ppo_epochs=10,
                 # num_minibatches=40,
-                minibatch_size=1000,  # OG: num_minibatch=40 => (40*1000)/40 = 1000
+                minibatch_size=100,  # OG: num_minibatch=40 => (40*100)/40 = 100
                 clip_param=0.05,
                 value_loss_coef=1.0,
                 entropy_coef=0.001,
