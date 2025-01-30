@@ -122,6 +122,8 @@ class MujocoConfig(ExperimentConfig):
                 depth=1,
                 embed_dim=64,
                 num_heads=1,
+                pos_emb=None,
+                pos_emb_kwargs=None,
             ),
             decoder=TransformerDecoderConfig(
                 obs_dim=obs_dim,

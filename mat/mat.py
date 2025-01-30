@@ -49,16 +49,19 @@ class MAT(nn.Module):
     def get_actions(
         self,
         obs: Float[Tensor, "b agents obs"],
+        agent_perm: Float[Tensor, "agents"] | None = None,
         available_actions: Float[Tensor, "b agents act"] | None = None,
         deterministic: bool = False,
     ) -> MATInferenceOutput:
-        values, encoded_obs = self.encoder(obs)
+        values, encoded_obs = self.encoder(obs, agent_perm=agent_perm)
         kwargs = self._get_sampler_kwargs(encoded_obs=encoded_obs, obs=obs, available_actions=available_actions)
         actions, action_log_probs = self.sampler.autoregressive(decoder=self.decoder, deterministic=deterministic, **kwargs)
         return MATInferenceOutput(actions=actions, action_log_probs=action_log_probs, values=values)
 
-    def get_values(self, obs: Float[Tensor, "b agents obs"]) -> Float[Tensor, "b agents 1"]:
-        values, _ = self.encoder(obs)
+    def get_values(
+        self, obs: Float[Tensor, "b agents obs"], agent_perm: Float[Tensor, "agents"] | None = None
+    ) -> Float[Tensor, "b agents 1"]:
+        values, _ = self.encoder(obs, agent_perm=agent_perm)
         return values
 
     def _get_sampler_kwargs(self, encoded_obs: Tensor, obs: Tensor, available_actions: Tensor | None = None) -> dict:

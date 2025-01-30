@@ -114,6 +114,8 @@ class MPEConfig(ExperimentConfig):
                 depth=1,
                 embed_dim=64,
                 num_heads=1,
+                pos_emb=None,  # "absolute",
+                pos_emb_kwargs=None,  # {"max_seq_len": num_agents},
             ),
             decoder=TransformerDecoderConfig(
                 obs_dim=obs_dim,
