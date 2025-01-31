@@ -95,7 +95,7 @@ if __name__ == "__main__":
         "--sweep-id",
         type=str,
         default=None,
-        help="Existing sweep ID to continue / add an agent to a run. If not provided, a new sweep will be created.",
+        help="Existing sweep ID to continue / add an agent to a run. If not provided, a new sweep will be created. Format: username/project/sweep_id",
     )
     print(f"Training will use these evaluation checkpoints (iterations): {brackets}")
     print(f"Final training length will be {MAX_ITERATIONS} iterations")
