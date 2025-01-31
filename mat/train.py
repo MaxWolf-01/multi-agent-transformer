@@ -44,12 +44,11 @@ def train(config: ExperimentConfig) -> None:
         )
     checkpointer = ModelCheckpointer(save_dir=Paths.CKPTS, prefix=config.wandb.name)
 
-    steps_per_it = config.buffer.length * config.n_parallel_envs
-    num_iterations = config.total_steps // steps_per_it
+    num_iterations = config.total_steps // buffer.batch_size
     total_steps = 0
     for i in range(num_iterations):
         metrics = trainer.train_iteration()
-        total_steps += steps_per_it
+        total_steps += buffer.batch_size
         if i % config.log_every == 0:
             log_dict = {
                 "iteration": i,

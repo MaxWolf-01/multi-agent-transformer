@@ -53,7 +53,6 @@ class MPEConfig(ExperimentConfig):
             decoder_type=DecoderType.MAT,
             sampler_type=SamplerType.DISCRETE,
             total_steps=20_000_000,
-            n_parallel_envs=(n_parallel_envs := 128),
             log_every=10,
             save_every=None,
             save_best=True,
@@ -79,7 +78,7 @@ class MPEConfig(ExperimentConfig):
             ),
             buffer=BufferConfig(
                 length=(episode_length := 25),
-                num_envs=n_parallel_envs,
+                num_envs=(n_parallel_envs := 128),
                 num_agents=num_agents,
                 obs_shape=(obs_dim,),
                 action_dim=1,  # discrete == index -> (1,), continuous == value -> (act_dim,)

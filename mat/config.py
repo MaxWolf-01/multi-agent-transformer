@@ -49,7 +49,6 @@ class ExperimentConfig:
     trainer: TrainerConfig
     wandb: WandbConfig
     total_steps: int
-    n_parallel_envs: int
     log_every: int
     save_every: int | None
     save_best: bool
@@ -125,8 +124,8 @@ class ExperimentArgumentHandler:
         config.trainer.gamma = args[cls.gamma] or config.trainer.gamma
         config.trainer.gae_lambda = args[cls.gae_lambda] or config.trainer.gae_lambda
 
-        config.n_parallel_envs = args[cls.envs] or config.n_parallel_envs
-        config.buffer.num_envs = args[cls.envs] or config.n_parallel_envs
+        config.buffer.num_envs = args[cls.envs] or config.buffer.num_envs
+        config.runner.num_envs = args[cls.envs] or config.runner.num_envs
         config.buffer.length = args[cls.buffer_len] or config.buffer.length
         config.runner.render = args[cls.render] or config.runner.render
         eplen_kwarg = "max_cycles" if config.env_type == EnvType.MPE else "episode_length"
