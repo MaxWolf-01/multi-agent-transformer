@@ -11,6 +11,15 @@ from jaxtyping import Float
 from torch import nn
 
 
+class Paths:
+    ROOT = Path(__file__).parent.parent
+    PROJECT = ROOT / "src"
+    VIDEOS = ROOT / "videos"
+    CKPTS = ROOT / "checkpoints"
+    DATA = ROOT / "data"
+    LOGS = ROOT / "logs"
+
+
 def init_weights(m: nn.Module, gain: float = 0.01, use_relu_gain: bool = False):
     if isinstance(m, nn.Linear):
         if use_relu_gain:
@@ -53,8 +62,6 @@ class WandbConfig:
 
 @dataclass
 class WandbArgumentHandler:
-    """Handles argument parsing and configuration for wandb logging"""
-
     enable: str = "wandb"
     project: str = "project"
     name: str = "name"
@@ -63,11 +70,12 @@ class WandbArgumentHandler:
 
     @classmethod
     def add_args(cls, parser: argparse.ArgumentParser) -> None:
-        parser.add_argument(f"--{cls.enable}", action="store_true", help="Use Weights & Biases logger")
-        parser.add_argument(f"--{cls.project}", type=str, help="Name of the Weights & Biases project")
-        parser.add_argument(f"--{cls.name}", type=str, help="Name for the Weights & Biases run")
-        parser.add_argument(f"--{cls.tags}", nargs="+", help="Tags for the run. Example usage: --tags t1 t2 t3")
-        parser.add_argument(f"--{cls.entity}", type=str, help="Wandb entity")
+        wandb_group = parser.add_argument_group("Weights & Biases")
+        wandb_group.add_argument(f"--{cls.enable}", action="store_true", help="Use Weights & Biases logger")
+        wandb_group.add_argument(f"--{cls.project}", type=str, help="Name of the Weights & Biases project")
+        wandb_group.add_argument(f"--{cls.name}", type=str, help="Name for the Weights & Biases run")
+        wandb_group.add_argument(f"--{cls.tags}", nargs="+", help="Tags for the run. Example usage: --tags t1 t2 t3")
+        wandb_group.add_argument(f"--{cls.entity}", type=str, help="Wandb entity")
 
     @classmethod
     def update_config(cls, namespace: argparse.Namespace, config: Any) -> None:
