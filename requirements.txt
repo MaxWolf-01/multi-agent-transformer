@@ -1,3 +1,9 @@
 pre-commit
 x-transformers
 jaxtyping
+pygame
+gymnasium
+pettingzoo
+git+https://github.com/neuro-soup/SuperSuit.git
+wandb
+einops
