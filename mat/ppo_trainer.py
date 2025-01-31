@@ -122,7 +122,7 @@ class PPOTrainer:
                 self._metrics.value_loss += value_loss.item()
                 self._metrics.entropy += entropy.item()
                 self._metrics.last_grad_norm = grad_norm.item()
-        num_updates = self.cfg.num_ppo_epochs * (self.runner.buffer.batch_size // self.cfg.minibatch_size)
+        num_updates = self.cfg.num_ppo_epochs * max(self.runner.buffer.batch_size // self.cfg.minibatch_size, 1)
         self._metrics.loss /= num_updates
         self._metrics.policy_objective /= num_updates
         self._metrics.value_loss /= num_updates
