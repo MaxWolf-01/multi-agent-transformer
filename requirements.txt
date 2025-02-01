@@ -3,6 +3,7 @@ x-transformers
 jaxtyping
 pygame
 gymnasium
+gymnasium-robotics
 pettingzoo
 git+https://github.com/neuro-soup/SuperSuit.git
 wandb
