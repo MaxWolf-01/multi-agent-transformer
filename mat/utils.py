@@ -1,14 +1,26 @@
 import argparse
+import sys
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 import numpy as np
 import torch
+import wandb
 from jaxtyping import Float
 from torch import nn
+
+
+class Paths:
+    ROOT = Path(__file__).parent.parent
+    PROJECT = ROOT / "src"
+    VIDEOS = ROOT / "videos"
+    CKPTS = ROOT / "checkpoints"
+    DATA = ROOT / "data"
+    LOGS = ROOT / "logs"
 
 
 def init_weights(m: nn.Module, gain: float = 0.01, use_relu_gain: bool = False):
@@ -53,8 +65,6 @@ class WandbConfig:
 
 @dataclass
 class WandbArgumentHandler:
-    """Handles argument parsing and configuration for wandb logging"""
-
     enable: str = "wandb"
     project: str = "project"
     name: str = "name"
@@ -63,11 +73,12 @@ class WandbArgumentHandler:
 
     @classmethod
     def add_args(cls, parser: argparse.ArgumentParser) -> None:
-        parser.add_argument(f"--{cls.enable}", action="store_true", help="Use Weights & Biases logger")
-        parser.add_argument(f"--{cls.project}", type=str, help="Name of the Weights & Biases project")
-        parser.add_argument(f"--{cls.name}", type=str, help="Name for the Weights & Biases run")
-        parser.add_argument(f"--{cls.tags}", nargs="+", help="Tags for the run. Example usage: --tags t1 t2 t3")
-        parser.add_argument(f"--{cls.entity}", type=str, help="Wandb entity")
+        wandb_group = parser.add_argument_group("Weights & Biases")
+        wandb_group.add_argument(f"--{cls.enable}", action="store_true", help="Use Weights & Biases logger")
+        wandb_group.add_argument(f"--{cls.project}", type=str, help="Name of the Weights & Biases project")
+        wandb_group.add_argument(f"--{cls.name}", type=str, help="Name for the Weights & Biases run")
+        wandb_group.add_argument(f"--{cls.tags}", nargs="+", help="Tags for the run. Example usage: --tags t1 t2 t3")
+        wandb_group.add_argument(f"--{cls.entity}", type=str, help="Wandb entity")
 
     @classmethod
     def update_config(cls, namespace: argparse.Namespace, config: Any) -> None:
@@ -126,3 +137,67 @@ class ModelCheckpointer:
                 self.best_path.unlink()
             self.best_path = filepath
             self.best_metric = metric
+
+
+@dataclass
+class HyperbandConfig:
+    first_eval: int
+    num_brackets: int
+    eta: int
+
+    @property
+    def brackets(self) -> list[int]:
+        return [self.first_eval * (self.eta**i) for i in range(self.num_brackets)]
+
+    @property
+    def max_iterations(self) -> int:
+        return self.brackets[-1]
+
+
+class WandbSweepConfig(TypedDict):
+    method: str
+    metric: dict[str, str]
+    parameters: dict
+    early_terminate: dict
+
+
+def sweep_iteration(project: str, hyperband: HyperbandConfig, train_fn: callable) -> None:
+    run = wandb.init(project=project)
+
+    sweep_config = run.config
+    args = []
+    for key, value in sweep_config.items():
+        if isinstance(value, bool) and value:
+            args.append(f"--{key}")
+        else:
+            args.append(f"--{key}")
+            args.append(str(value))
+    args.extend(["--wandb", "--steps", str(hyperband.max_iterations * sweep_config["envs"] * sweep_config["buffer-len"])])
+    sys.argv[1:] = args
+
+    train_fn()
+
+
+def run_sweep(project: str, sweep_params: dict, hyperband: HyperbandConfig, train_fn: callable) -> None:
+    parser = argparse.ArgumentParser(description="Run or continue a W&B sweep")
+    parser.add_argument(
+        "--sweep-id",
+        type=str,
+        default=None,
+        help="Existing sweep ID to continue / add an agent to a run. Format: username/project/sweep_id",
+    )
+    args = parser.parse_args()
+    print(f"Training will use these evaluation checkpoints (iterations): {hyperband.brackets}")
+    print(f"Final training length will be {hyperband.max_iterations} iterations")
+    sweep_config = {
+        "method": "bayes",
+        "metric": {"name": "mean_reward", "goal": "maximize"},
+        "parameters": sweep_params,
+        "early_terminate": {
+            "type": "hyperband",
+            "min_iter": hyperband.first_eval,
+            "eta": hyperband.eta,
+        },
+    }
+    sweep_id = args.sweep_id or wandb.sweep(sweep_config, project=project)
+    wandb.agent(sweep_id, function=partial(sweep_iteration, project=project, hyperband=hyperband, train_fn=train_fn))
