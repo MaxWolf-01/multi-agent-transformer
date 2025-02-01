@@ -128,7 +128,7 @@ class ExperimentArgumentHandler:
         config.runner.num_envs = args[cls.envs] or config.runner.num_envs
         config.buffer.length = args[cls.buffer_len] or config.buffer.length
         config.runner.render = args[cls.render] or config.runner.render
-        eplen_kwarg = "max_cycles" if config.env_type == EnvType.MPE else "episode_length"
+        eplen_kwarg = "max_cycles" if config.env_type == EnvType.MPE else "max_episode_steps"
         config.runner.env_kwargs[eplen_kwarg] = args[cls.episode_length] or config.runner.env_kwargs[eplen_kwarg]
 
         config.encoder.embed_dim = args[cls.embed_dim] or config.encoder.embed_dim
