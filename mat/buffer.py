@@ -7,7 +7,7 @@ import torch
 from jaxtyping import Float
 from torch import Tensor
 
-from mat.utils import get_gae_returns_and_advantages
+from mat.utils import ValueNorm, get_gae_returns_and_advantages
 
 
 class Trajectory(NamedTuple):
@@ -119,10 +119,14 @@ class Buffer:
         gamma: float,
         gae_lambda: float,
         normalize_advantage: bool,
+        value_normalizer: ValueNorm | None = None,
     ) -> None:
+        values = np.concatenate([self.values, last_value[None]])
+        if value_normalizer:
+            values = value_normalizer.denormalize(torch.tensor(values, device=value_normalizer.device)).cpu().numpy()
         self.returns, self.advantages = get_gae_returns_and_advantages(
             rewards=self.rewards,
-            values=np.concatenate([self.values, last_value[None]]),
+            values=values,
             dones=self.dones[:-1],
             gamma=gamma,
             gae_lambda=gae_lambda,

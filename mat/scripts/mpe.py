@@ -113,6 +113,7 @@ class MPEConfig(ExperimentConfig):
                 gae_lambda=0.95,
                 use_clipped_value_loss=True,
                 normalize_advantage=True,
+                normalize_value=True,
                 use_huber_loss=True,
                 huber_delta=10.0,
                 device=device,

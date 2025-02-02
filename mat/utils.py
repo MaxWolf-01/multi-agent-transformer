@@ -11,7 +11,7 @@ import numpy as np
 import torch
 import wandb
 from jaxtyping import Float
-from torch import nn
+from torch import Tensor, nn
 
 
 class Paths:
@@ -34,7 +34,7 @@ def init_weights(m: nn.Module, gain: float = 0.01, use_relu_gain: bool = False):
 
 def get_gae_returns_and_advantages(
     rewards: Float[np.ndarray, "steps envs agents"],
-    values: Float[np.ndarray, "step envs agents"],
+    values: Float[np.ndarray, "step+1 envs agents"],
     dones: Float[np.ndarray, "steps envs agents"],
     gamma: float,
     gae_lambda: float,
@@ -42,7 +42,7 @@ def get_gae_returns_and_advantages(
     """Compute returns and advantages using Generalized Advantage Estimation (GAE)"""
     steps = rewards.shape[0]
     advantages = np.zeros_like(rewards)
-    last_gae = 0
+    last_gae = values[-1]  # bootstrap from last state value
     nonterminal_mask = 1 - dones
     for t in reversed(range(steps)):
         # TD error = r_t + γV(s_{t+1}) - V(s_t)
@@ -51,6 +51,49 @@ def get_gae_returns_and_advantages(
         last_gae = advantages[t] = delta + gamma * gae_lambda * last_gae * nonterminal_mask[t]
     returns = advantages + values[:-1]
     return returns, advantages
+
+
+@dataclass
+class ValueNorm:
+    device: str | torch.device
+    beta: float = 0.99999
+    dims: tuple[int, ...] = (0,)  # normalize across batch by default
+    eps_debias: float = 1e-5
+    eps_var: float = 1e-2
+
+    def __post_init__(self):
+        self.running_mean = torch.tensor(0.0, device=self.device)
+        self.running_mean_sq = torch.tensor(0.0, device=self.device)
+        self.debiasing_term = torch.tensor(0.0, device=self.device)
+
+    @torch.no_grad()
+    def update(self, x: Float[Tensor, "batch agents"]) -> None:
+        """Update running statistics with new batch of values."""
+        batch_mean = x.mean(dim=self.dims)
+        batch_sq_mean = (x**2).mean(dim=self.dims)
+
+        self.running_mean = self.beta * self.running_mean + (1.0 - self.beta) * batch_mean
+        self.running_mean_sq = self.beta * self.running_mean_sq + (1.0 - self.beta) * batch_sq_mean
+        self.debiasing_term = self.beta * self.debiasing_term + (1.0 - self.beta)
+
+    @torch.no_grad()
+    def transform(self, x: Float[Tensor, "batch agents"], denormalize: bool = False) -> Float[Tensor, "batch agents"]:
+        """Normalize or denormalize values."""
+        debias = self.debiasing_term.clamp(min=self.eps_debias)
+        mean = self.running_mean / debias
+        mean_sq = self.running_mean_sq / debias
+        var = (mean_sq - mean**2).clamp(min=self.eps_var)
+
+        expand_dims = (None,) * len(self.dims)
+        if denormalize:
+            return x * torch.sqrt(var[expand_dims]) + mean[expand_dims]
+        return (x - mean[expand_dims]) / torch.sqrt(var[expand_dims])
+
+    def normalize(self, x: Float[Tensor, "batch agents"]) -> Float[Tensor, "batch agents"]:
+        return self.transform(x, denormalize=False)
+
+    def denormalize(self, x: Float[Tensor, "batch agents"]) -> Float[Tensor, "batch agents"]:
+        return self.transform(x, denormalize=True)
 
 
 @dataclass
@@ -172,7 +215,15 @@ def sweep_iteration(project: str, hyperband: HyperbandConfig, train_fn: callable
         else:
             args.append(f"--{key}")
             args.append(str(value))
-    args.extend(["--wandb", "--steps", str(hyperband.max_iterations * sweep_config["envs"] * sweep_config["buffer-len"])])
+    args.extend(
+        [
+            "--wandb",
+            "--steps",
+            str(hyperband.max_iterations * sweep_config["envs"] * sweep_config["buffer-len"]),
+            "--tags",
+            "sweep",
+        ]
+    )
     sys.argv[1:] = args
 
     train_fn()

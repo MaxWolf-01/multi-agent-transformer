@@ -8,6 +8,7 @@ from torch import Tensor
 
 from mat.mat import MAT, MATTrainingOutput
 from mat.runners.base import EnvRunner
+from mat.utils import ValueNorm
 
 
 @dataclass
@@ -27,6 +28,7 @@ class TrainerConfig:
     gae_lambda: float
     use_clipped_value_loss: bool
     normalize_advantage: bool  # batch-level normalization
+    normalize_value: bool
     use_huber_loss: bool
     huber_delta: float
 
@@ -60,6 +62,7 @@ class PPOTrainer:
             else partial(F.mse_loss, reduction="none")
         )
         self._clip_range = (1 - self.cfg.clip_param, 1 + self.cfg.clip_param)
+        self.value_normalizer = ValueNorm(device=self.cfg.device) if self.cfg.normalize_value else None
         self._clear_metrics = lambda: Metrics(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         self._metrics = self._clear_metrics()
 
@@ -81,6 +84,9 @@ class PPOTrainer:
         old_values: Float[Tensor, "batch agents"],
         active_masks: Float[Tensor, "batch agents"] | None = None,
     ) -> Float[Tensor, "1"]:
+        if self.value_normalizer:
+            self.value_normalizer.update(returns)
+            returns = self.value_normalizer.normalize(returns)
         loss = self.loss_fn(values, returns)
         if self.cfg.use_clipped_value_loss:
             clipped_vals = values.clamp(old_values - self.cfg.clip_param, old_values + self.cfg.clip_param)
@@ -142,6 +148,7 @@ class PPOTrainer:
             gamma=self.cfg.gamma,
             gae_lambda=self.cfg.gae_lambda,
             normalize_advantage=self.cfg.normalize_advantage,
+            value_normalizer=self.value_normalizer,
         )
         self._update_policy()
         self.runner.buffer.after_update()  # reset buffer (keeps last observation for next iteration)
