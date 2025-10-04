@@ -3,6 +3,8 @@
 
 Explorations into [Multi-Agent Reinforcement Learning is a Sequence Modeling Problem](https://arxiv.org/abs/2205.14953). See my [note](https://mwolf.dev/general/Multi-Agent-Reinforcement-Learning-is-a-Sequence-Modeling-Problem) on interesting theoretical takeaways.
 
+What I found interesting about this work was how sequential decision making can make searching the action space much more tractable, and it sparked ideas about how transformers could be applied to modelling agentic neurons.
+
 
 <details>
   <summary>Abandoned roadmap.</summary>
