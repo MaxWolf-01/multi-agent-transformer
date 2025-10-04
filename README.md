@@ -1,12 +1,13 @@
 
 # Multi-Agent Transformer (MAT)
 
-Installation:
-```bash
-mamba create -yn mat python="3.12"
-mamba activate mat
-pip install -r requirements.txt
-```
+Explorations into [Multi-Agent Reinforcement Learning is a Sequence Modeling Problem](https://arxiv.org/abs/2205.14953). See my [note](https://mwolf.dev/general/Multi-Agent-Reinforcement-Learning-is-a-Sequence-Modeling-Problem) on interesting theoretical takeaways.
+
+
+<details>
+  <summary>Abandoned roadmap.</summary>
+
+It's kinda funny in hindsight.
 
 ### TODO
 
@@ -17,6 +18,8 @@ pip install -r requirements.txt
   - [ ] hidden agents (STM context / registers)
 - [ ] GATO (multi-modal, multi-task)
 - [ ] Streaming Deep RL
+
+</details>
 
 ### Appreciation
 
